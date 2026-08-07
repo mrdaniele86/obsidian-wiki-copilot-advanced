@@ -1,0 +1,9 @@
+{
+  "id": "wiki-copilot",
+  "name": "Wiki Copilot",
+  "version": "0.3.25",
+  "minAppVersion": "1.11.4",
+  "description": "Ask your persistent LLM Wiki with local lexical retrieval, Wikilink expansion, and traceable citations.",
+  "author": "Wiki Copilot contributors",
+  "isDesktopOnly": false
+}

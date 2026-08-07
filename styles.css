@@ -1,0 +1,517 @@
+.workspace-leaf-content[data-type="wiki-copilot-view"] .view-content {
+  padding: 0;
+  overflow: hidden;
+}
+
+.wiki-copilot-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--background-primary);
+}
+
+.wiki-copilot-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+  padding: var(--size-4-3) var(--size-4-3) var(--size-4-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.wiki-copilot-title-group {
+  min-width: 0;
+}
+
+.wiki-copilot-title-group h2 {
+  margin: 0;
+  font-size: var(--font-ui-medium);
+}
+
+.wiki-copilot-header-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--size-4-1);
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.wiki-copilot-pending-chip,
+.wiki-copilot-role,
+.wiki-copilot-origin {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 var(--size-4-1);
+  border-radius: var(--radius-s);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.2;
+}
+
+.wiki-copilot-pending-chip,
+.wiki-copilot-role.is-pending-source {
+  color: var(--text-warning);
+  background: color-mix(in srgb, var(--color-orange) 14%, transparent);
+}
+
+.wiki-copilot-header-actions,
+.wiki-copilot-composer-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+}
+
+.wiki-copilot-status {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  min-width: 0;
+}
+
+.wiki-copilot-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.wiki-copilot-status-dot.is-building {
+  background: var(--interactive-accent);
+  animation: wiki-copilot-pulse 1.2s ease-in-out infinite;
+}
+
+.wiki-copilot-status-dot.is-ready {
+  background: var(--color-green);
+}
+
+.wiki-copilot-status-dot.is-error {
+  background: var(--color-red);
+}
+
+.wiki-copilot-chat {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+  padding: var(--size-4-3);
+}
+
+.wiki-copilot-welcome {
+  max-width: 560px;
+  margin: min(12vh, 72px) auto var(--size-4-6);
+  padding: var(--size-4-5);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  background: var(--background-secondary);
+  text-align: center;
+}
+
+.wiki-copilot-welcome-icon {
+  display: inline-flex;
+  color: var(--interactive-accent);
+}
+
+.wiki-copilot-welcome-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.wiki-copilot-welcome h3 {
+  margin: var(--size-4-2) 0;
+}
+
+.wiki-copilot-welcome p {
+  margin: var(--size-4-2) 0 0;
+  color: var(--text-muted);
+}
+
+.wiki-copilot-callout {
+  padding: var(--size-4-2);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+}
+
+.wiki-copilot-message {
+  min-width: 0;
+  max-width: 760px;
+  margin: 0 auto var(--size-4-4);
+  overflow-x: clip;
+}
+
+.wiki-copilot-message.is-user {
+  width: fit-content;
+  max-width: min(680px, 88%);
+  margin-right: 0;
+}
+
+.wiki-copilot-message-label {
+  margin-bottom: var(--size-4-1);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+}
+
+.wiki-copilot-message-body {
+  min-width: 0;
+  max-width: 100%;
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.wiki-copilot-message.is-assistant .wiki-copilot-message-body {
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--size-4-2) var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l) var(--radius-l) var(--radius-l) var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.wiki-copilot-message-body.markdown-rendered {
+  --table-header-size: var(--font-ui-small);
+  --table-text-size: var(--font-ui-small);
+  max-width: 100%;
+  font-size: var(--font-ui-small);
+  line-height: 1.45;
+  overflow-x: hidden;
+}
+
+.wiki-copilot-message-body.markdown-rendered > :first-child {
+  margin-top: 0;
+}
+
+.wiki-copilot-message-body.markdown-rendered > :last-child {
+  margin-bottom: 0;
+}
+
+.wiki-copilot-message-body.markdown-rendered p {
+  margin-block: 0 0.65em;
+}
+
+.wiki-copilot-message-body.markdown-rendered :is(h1, h2, h3, h4, h5, h6) {
+  margin-block: 0.9em 0.35em;
+  line-height: 1.3;
+}
+
+.wiki-copilot-message-body.markdown-rendered h1 {
+  font-size: 1.35em;
+}
+
+.wiki-copilot-message-body.markdown-rendered h2 {
+  font-size: 1.22em;
+}
+
+.wiki-copilot-message-body.markdown-rendered h3 {
+  font-size: 1.12em;
+}
+
+.wiki-copilot-message-body.markdown-rendered :is(h4, h5, h6) {
+  font-size: 1.05em;
+}
+
+.wiki-copilot-message-body.markdown-rendered table {
+  width: max-content;
+  min-width: 100%;
+  line-height: 1.35;
+}
+
+.workspace-leaf-content[data-type="wiki-copilot-view"]
+  .wiki-copilot-message-body.markdown-rendered
+  :is(table, th, td) {
+  font-size: var(--font-ui-small) !important;
+  line-height: 1.4 !important;
+}
+
+.wiki-copilot-message-body.markdown-rendered :is(th, td) {
+  min-width: 72px;
+  max-width: 20rem;
+  padding: 5px 8px;
+  vertical-align: top;
+}
+
+.wiki-copilot-message-body.markdown-rendered :is(ul, ol) {
+  margin-block: 0.35em 0.65em;
+  padding-inline-start: 1.5em;
+}
+
+.wiki-copilot-message-body.markdown-rendered li + li {
+  margin-top: 0.15em;
+}
+
+.wiki-copilot-message-body.markdown-rendered :is(blockquote, pre) {
+  margin-block: 0.5em 0.75em;
+}
+
+.wiki-copilot-citation-ref {
+  position: relative;
+  top: -0.15em;
+  margin-inline: 0.08em;
+  font-size: 0.72em;
+  line-height: 0;
+  vertical-align: super;
+  white-space: nowrap;
+}
+
+.wiki-copilot-citation-ref .wiki-copilot-citation {
+  color: var(--text-accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.wiki-copilot-citation-ref .wiki-copilot-citation:hover {
+  color: var(--text-accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.wiki-copilot-message-body.markdown-rendered :is(.table-wrapper, .el-table) {
+  max-width: 100%;
+  margin-bottom: var(--size-4-3);
+  padding-bottom: var(--size-4-2);
+  overflow-x: auto;
+}
+
+.wiki-copilot-message.is-user .wiki-copilot-message-body {
+  padding: var(--size-4-2) var(--size-4-3);
+  border-radius: var(--radius-l) var(--radius-l) var(--radius-s) var(--radius-l);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  cursor: text;
+  white-space: pre-wrap;
+}
+
+.workspace-leaf-content[data-type="wiki-copilot-view"]
+  .wiki-copilot-message.is-user
+  .wiki-copilot-message-body {
+  -webkit-touch-callout: default !important;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+.workspace-leaf-content[data-type="wiki-copilot-view"]
+  .wiki-copilot-message.is-user
+  .wiki-copilot-message-body::selection {
+  background: var(--background-primary) !important;
+  color: var(--text-normal) !important;
+  text-shadow: none;
+}
+
+.wiki-copilot-message.is-error {
+  padding: var(--size-4-3);
+  border: 1px solid color-mix(in srgb, var(--color-red) 45%, var(--background-modifier-border));
+  border-radius: var(--radius-m);
+  background: color-mix(in srgb, var(--color-red) 8%, var(--background-primary));
+}
+
+.wiki-copilot-timeout-sources-note {
+  margin: var(--size-4-2) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.wiki-copilot-general-answer-badge {
+  color: var(--text-faint);
+  font-weight: var(--font-normal);
+}
+
+.wiki-copilot-message.wiki-copilot-loading .wiki-copilot-message-body {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  color: var(--text-muted);
+}
+
+.wiki-copilot-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--background-modifier-border);
+  border-top-color: var(--interactive-accent);
+  border-radius: 50%;
+  animation: wiki-copilot-spin 0.8s linear infinite;
+}
+
+.wiki-copilot-unverified-warning {
+  margin-top: var(--size-4-2);
+  padding: var(--size-4-2);
+  border-left: 3px solid var(--color-orange);
+  color: var(--text-warning);
+  background: color-mix(in srgb, var(--color-orange) 9%, transparent);
+  font-size: var(--font-ui-small);
+}
+
+.wiki-copilot-sources {
+  min-width: 0;
+  max-width: 100%;
+  margin-top: var(--size-4-3);
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: var(--size-4-2);
+}
+
+.wiki-copilot-sources summary {
+  width: fit-content;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+}
+
+.wiki-copilot-source-list {
+  display: grid;
+  min-width: 0;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-2);
+}
+
+button.wiki-copilot-source {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  height: auto;
+  padding: var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  text-align: left;
+  white-space: normal;
+}
+
+button.wiki-copilot-source:hover {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
+button.wiki-copilot-source.is-citation-target {
+  border-color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-primary));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+}
+
+.wiki-copilot-source-top {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  margin-bottom: 3px;
+}
+
+.wiki-copilot-source-id {
+  color: var(--interactive-accent);
+  font-family: var(--font-monospace);
+  font-weight: var(--font-semibold);
+}
+
+.wiki-copilot-role {
+  color: var(--text-muted);
+  background: var(--background-modifier-border);
+}
+
+.wiki-copilot-origin {
+  color: var(--text-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+
+.wiki-copilot-source-title {
+  font-weight: var(--font-semibold);
+}
+
+.wiki-copilot-source-path,
+.wiki-copilot-source-preview {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  overflow-wrap: anywhere;
+}
+
+.wiki-copilot-source-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.wiki-copilot-composer {
+  flex: 0 0 auto;
+  padding: var(--size-4-2) var(--size-4-3) max(var(--size-4-3), env(safe-area-inset-bottom));
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+textarea.wiki-copilot-input {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  max-height: 32vh;
+  resize: vertical;
+  padding: var(--size-4-2);
+  border-radius: var(--radius-m);
+}
+
+.wiki-copilot-composer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-2);
+}
+
+.wiki-copilot-shortcut {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+@keyframes wiki-copilot-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes wiki-copilot-pulse {
+  50% { opacity: 0.35; }
+}
+
+@media (max-width: 600px) {
+  .wiki-copilot-header,
+  .wiki-copilot-chat,
+  .wiki-copilot-composer {
+    padding-left: var(--size-4-2);
+    padding-right: var(--size-4-2);
+  }
+
+  .wiki-copilot-welcome {
+    margin-top: var(--size-4-4);
+    padding: var(--size-4-3);
+  }
+
+  .wiki-copilot-message.is-user {
+    max-width: 94%;
+  }
+
+  .wiki-copilot-shortcut {
+    display: none;
+  }
+
+  .wiki-copilot-composer-buttons {
+    width: 100%;
+  }
+
+  .wiki-copilot-composer-buttons button {
+    flex: 1;
+    min-height: 40px;
+  }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wiki-copilot-status-dot.is-building,
+  .wiki-copilot-spinner,
+  button.wiki-copilot-source.is-citation-target {
+    animation: none;
+  }
+}

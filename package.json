@@ -1,0 +1,35 @@
+{
+  "name": "obsidian-wiki-copilot",
+  "version": "0.3.25",
+  "description": "Schema-aware, citation-first AI retrieval for persistent LLM Wiki vaults.",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit && node esbuild.config.mjs production",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm test && pnpm build",
+    "deploy": "pnpm build && node scripts/deploy.mjs"
+  },
+  "keywords": [
+    "obsidian",
+    "llm-wiki",
+    "retrieval",
+    "ai"
+  ],
+  "author": "Wiki Copilot contributors",
+  "license": "MIT",
+  "dependencies": {
+    "minisearch": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "esbuild": "^0.28.1",
+    "obsidian": "^1.13.1",
+    "tslib": "^2.8.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "packageManager": "pnpm@11.16.0"
+}

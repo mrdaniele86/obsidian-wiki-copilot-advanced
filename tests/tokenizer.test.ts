@@ -12,7 +12,7 @@ describe("tokenizeForSearch", () => {
   });
 
   it("keeps technical identifiers and emits useful variants", () => {
-    const tokens = tokenizeForSearch("MiniSearch raw/processed A320BrakeMode");
+    const tokens = tokenizeForSearch("MiniSearch raw/processed A320BrakeMode XMLParser");
     expect(tokens).toEqual(expect.arrayContaining([
       "minisearch",
       "raw/processed",
@@ -21,7 +21,10 @@ describe("tokenizeForSearch", () => {
       "a320brakemode",
       "a320",
       "brake",
-      "mode"
+      "mode",
+      "xmlparser",
+      "xml",
+      "parser"
     ]));
   });
 

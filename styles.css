@@ -228,8 +228,8 @@
 .workspace-leaf-content[data-type="wiki-copilot-view"]
   .wiki-copilot-message-body.markdown-rendered
   :is(table, th, td) {
-  font-size: var(--font-ui-small) !important;
-  line-height: 1.4 !important;
+  font-size: var(--font-ui-small);
+  line-height: 1.4;
 }
 
 .wiki-copilot-message-body.markdown-rendered :is(th, td) {
@@ -293,16 +293,16 @@
 .workspace-leaf-content[data-type="wiki-copilot-view"]
   .wiki-copilot-message.is-user
   .wiki-copilot-message-body {
-  -webkit-touch-callout: default !important;
-  -webkit-user-select: text !important;
-  user-select: text !important;
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .workspace-leaf-content[data-type="wiki-copilot-view"]
   .wiki-copilot-message.is-user
   .wiki-copilot-message-body::selection {
-  background: var(--background-primary) !important;
-  color: var(--text-normal) !important;
+  background: var(--background-primary);
+  color: var(--text-normal);
   text-shadow: none;
 }
 

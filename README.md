@@ -1,5 +1,42 @@
 # Wiki Copilot
 
+Wiki Copilot is an Obsidian question-answering plugin for **persistent LLM Wikis**. It treats a vault as a structured knowledge system instead of a flat collection of interchangeable chunks: schema files describe the local conventions, Wiki pages provide curated knowledge, stable sources provide traceable evidence, and pending sources remain excluded by default.
+
+Retrieval runs locally with MiniSearch, CJK-aware tokenization, technical-identifier matching, Markdown section chunking, Wikilink expansion, and source backtracking. No embedding service is required. Only the passages selected for the current question, a short conversation history, and the question itself are sent to the OpenAI-compatible model configured by the user.
+
+## Features
+
+- Automatically detects Schema, Index, Topic, Concept, Summary, stable-source, and pending-source roles.
+- Prioritizes curated Wiki knowledge, then reads relevant sections from stable source Markdown when needed.
+- Preserves model numbers, document IDs, paths, compound terms, and camel-case identifiers during lexical retrieval.
+- Expands related notes through outgoing links and backlinks while reducing the influence of hub pages.
+- Supports low, medium, and high retrieval ranges covering up to 12, 24, or 36 knowledge pages.
+- Renders traceable citations that open the exact Obsidian note and heading.
+- Stores API keys in Obsidian Secret Storage instead of plugin settings files.
+- Avoids Node.js, Electron-only APIs, native databases, and local helper services; `isDesktopOnly` is `false`.
+
+## Installation
+
+Wiki Copilot requires Obsidian 1.13.0 or later. For manual installation, copy `main.js`, `manifest.json`, and `styles.css` into `<vault-config-dir>/plugins/wiki-copilot/`, then enable **Wiki Copilot** under Community plugins.
+
+Choose DeepSeek, OpenAI, or another OpenAI-compatible service in the plugin settings. Without a configured model, the Send button returns local retrieval results; with a configured model, it generates an answer with citations.
+
+## Privacy and vault access
+
+- The local index stays inside the vault configuration directory.
+- The plugin enumerates Markdown files to build and update the local index, then reads only the notes required for retrieval and evidence extraction.
+- Pending or unverified source directories are excluded from stable evidence by default.
+- Source text is treated as untrusted data; model instructions explicitly tell the model to ignore instructions embedded in retrieved notes.
+- Wiki Copilot does not automatically modify Wiki or source notes in the current release.
+
+## Roadmap
+
+1. Validate and harden real-world mobile use, including iOS compatibility, memory use, indexing responsiveness, settings, chat, citations, and temporary note opening.
+2. Add OpenAI-compatible streaming output, cancellation, incremental Markdown rendering, and non-streaming fallback.
+3. Add optional embedding-based hybrid retrieval while preserving the existing lexical, identifier, Wikilink, and layered-Wiki retrieval paths.
+
+## 中文说明
+
 Wiki Copilot 是一个面向 **persistent LLM Wiki** 的 Obsidian 问答插件。它不是把整个 Vault 当作一堆同质文本，而是理解以下知识角色：
 
 - Schema：`AGENTS.md`、`CLAUDE.md` 等知识库规则
@@ -101,7 +138,13 @@ Wiki Copilot 是一个面向 **persistent LLM Wiki** 的 Obsidian 问答插件�
 
 ## Roadmap
 
-### 下一步：流式输出
+### 下一步：手机端验证
+
+- 在真实 Android / iOS 设备上验证安装、设置、索引、提问、引用跳转和临时页面行为。
+- 检查大知识库下的内存占用、索引响应性、前后台切换和缓存恢复。
+- 修复移动端兼容问题，并建立可重复执行的发布前检查清单。
+
+### 再下一步：流式输出
 
 - 使用 OpenAI-compatible 流式响应，逐步显示模型回答，缩短首次内容出现前的等待时间。
 - 支持中止当前回答，并完善流式 Markdown、错误恢复和超时处理。

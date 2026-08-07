@@ -14,7 +14,7 @@ const paths = [
   "wiki/summaries/规范摘要.md",
   "raw/processed/codes/md/规范.md",
   "raw/pending/codes/md/草稿.md",
-  ".obsidian/plugins/example.md"
+  ".trash/example.md"
 ];
 
 describe("knowledge profile", () => {
@@ -32,7 +32,7 @@ describe("knowledge profile", () => {
     expect(classifyKnowledgePath("wiki/summaries/规范摘要.md", profile)).toBe("summary");
     expect(classifyKnowledgePath("raw/processed/codes/md/规范.md", profile)).toBe("stable-source");
     expect(classifyKnowledgePath("raw/pending/codes/md/草稿.md", profile)).toBe("pending-source");
-    expect(isExcludedPath(".obsidian/plugins/example.md", profile)).toBe(true);
+    expect(isExcludedPath(".trash/example.md", profile)).toBe(true);
   });
 
   it("discovers equivalent Wiki philosophies without project-specific folder names", () => {

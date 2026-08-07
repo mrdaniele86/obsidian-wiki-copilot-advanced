@@ -410,10 +410,16 @@ export class IndexCoordinator {
 
     try {
       const schemaContents = await this.readPotentialSchemas(markdownFiles, settings);
+      const configDir = this.vault.configDir;
       const profile = discoverKnowledgeProfile(
         markdownFiles.map((file) => file.path),
         schemaContents,
-        settings.profile,
+        {
+          ...settings.profile,
+          excludedRoots: typeof configDir === "string" && configDir.trim()
+            ? [...settings.profile.excludedRoots, configDir]
+            : settings.profile.excludedRoots
+        },
         settings.autoDetectProfile
       );
       if (generation !== this.generation) {

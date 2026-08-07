@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- 修复 iOS 16.4 以前不支持正则后行断言而导致的移动端兼容问题
+- 设置页迁移到 Obsidian 1.13 声明式 API，支持原生设置搜索并统一标题样式
+- 改进弹出窗口计时器、Vault 配置目录、命令 ID 与 CSS 的 Obsidian API 兼容性
+- 增加英文 README、Vault 访问说明和手机端优先 Roadmap
+- 新增项目级 `AGENTS.md`，记录架构约束、开发验证与发布流程
+
 ## 1.0.0
 
 - 首个公开版本：面向 persistent LLM Wiki 的本地检索与 OpenAI-compatible 知识库问答

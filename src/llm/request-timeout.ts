@@ -26,9 +26,9 @@ export async function withTimeout<T>(
   milliseconds: number,
   message: string
 ): Promise<T> {
-  let timeoutId: ReturnType<typeof globalThis.setTimeout> | undefined;
+  let timeoutId: number | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutId = globalThis.setTimeout(
+    timeoutId = window.setTimeout(
       () => reject(new RequestTimeoutError(milliseconds, message)),
       milliseconds
     );
@@ -37,7 +37,7 @@ export async function withTimeout<T>(
     return await Promise.race([promise, timeout]);
   } finally {
     if (timeoutId !== undefined) {
-      globalThis.clearTimeout(timeoutId);
+      window.clearTimeout(timeoutId);
     }
   }
 }

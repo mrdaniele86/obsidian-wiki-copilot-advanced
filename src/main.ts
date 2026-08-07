@@ -34,7 +34,7 @@ export default class WikiCopilotPlugin extends Plugin {
   private manualRebuildPromise: Promise<void> | null = null;
 
   override async onload(): Promise<void> {
-    const savedData = await this.loadData();
+    const savedData: unknown = await this.loadData();
     this.settings = loadWikiCopilotSettings(savedData);
     await this.migrateLegacyApiKey(savedData);
     const cacheRepository = this.manifest.dir
@@ -59,7 +59,7 @@ export default class WikiCopilotPlugin extends Plugin {
     this.addSettingTab(new WikiCopilotSettingTab(this.app, this));
 
     this.addCommand({
-      id: "open-wiki-copilot",
+      id: "open-chat",
       name: "打开问答侧栏",
       callback: () => void this.activateView()
     });

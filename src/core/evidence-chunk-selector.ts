@@ -1,4 +1,5 @@
 import { chunkMarkdown } from "./markdown-chunker";
+import { yieldToUi } from "./cooperative";
 import { tokenizeForSearch } from "./tokenizer";
 import type { MarkdownChunk } from "./types";
 
@@ -94,8 +95,4 @@ function selectTopChunks(
     selected[selected.length - 1] = chunks[0];
   }
   return selected;
-}
-
-function yieldToUi(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
 }

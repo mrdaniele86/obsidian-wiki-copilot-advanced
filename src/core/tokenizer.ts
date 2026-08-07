@@ -2,7 +2,9 @@ const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=
 const TOKEN_RUN =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+|[\p{L}\p{N}][\p{L}\p{N}_./#+:-]*/gu;
 const TECHNICAL_SEPARATOR = /[._/#+:-]+/u;
-const CAMEL_BOUNDARY = /(?<=[\p{Ll}\p{N}])(?=\p{Lu})|(?<=\p{Lu})(?=\p{Lu}\p{Ll})/gu;
+const LOWERCASE_OR_NUMBER = /[\p{Ll}\p{N}]/u;
+const UPPERCASE = /\p{Lu}/u;
+const LOWERCASE = /\p{Ll}/u;
 
 let wordSegmenter: Intl.Segmenter | undefined;
 
@@ -28,6 +30,33 @@ function pushIfUseful(tokens: string[], value: string): void {
     return;
   }
   tokens.push(token);
+}
+
+/**
+ * Splits camel-case identifiers without regular-expression lookbehind.
+ * Lookbehind is unavailable on iOS versions before 16.4, while this explicit
+ * scan works on every mobile version supported by Obsidian.
+ */
+function splitCamelCase(value: string): string[] {
+  const characters = Array.from(value);
+  const parts: string[] = [];
+  let partStart = 0;
+
+  for (let index = 1; index < characters.length; index += 1) {
+    const previous = characters[index - 1] ?? "";
+    const current = characters[index] ?? "";
+    const next = characters[index + 1] ?? "";
+    const startsWord = LOWERCASE_OR_NUMBER.test(previous) && UPPERCASE.test(current);
+    const endsAcronym = UPPERCASE.test(previous) && UPPERCASE.test(current) && LOWERCASE.test(next);
+    if (!startsWord && !endsAcronym) {
+      continue;
+    }
+    parts.push(characters.slice(partStart, index).join(""));
+    partStart = index;
+  }
+
+  parts.push(characters.slice(partStart).join(""));
+  return parts;
 }
 
 function tokenizeCjkRun(run: string): string[] {
@@ -67,7 +96,7 @@ function tokenizeTechnicalRun(run: string): string[] {
 
   for (const part of run.split(TECHNICAL_SEPARATOR)) {
     pushIfUseful(tokens, part.toLocaleLowerCase());
-    for (const camelPart of part.split(CAMEL_BOUNDARY)) {
+    for (const camelPart of splitCamelCase(part)) {
       pushIfUseful(tokens, camelPart.toLocaleLowerCase());
     }
   }

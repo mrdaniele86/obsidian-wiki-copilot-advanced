@@ -65,7 +65,7 @@ class BoundedEvidenceIndex {
       this.loaded.size > 0 &&
       (this.loaded.size >= this.maxFiles || this.totalCharacters + size > this.maxCharacters)
     ) {
-      const oldest = this.loaded.keys().next().value as string | undefined;
+      const oldest = this.loaded.keys().next().value;
       if (!oldest) {
         break;
       }

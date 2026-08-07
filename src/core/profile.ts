@@ -6,7 +6,7 @@ export const DEFAULT_PROFILE_CONFIG: KnowledgeProfileConfig = {
   wikiRoots: ["wiki"],
   stableSourceRoots: [],
   pendingSourceRoots: [],
-  excludedRoots: [".obsidian", ".trash", ".git", "node_modules"]
+  excludedRoots: [".trash", ".git", "node_modules"]
 };
 
 const WIKI_DIRECTORY_NAMES = new Set([

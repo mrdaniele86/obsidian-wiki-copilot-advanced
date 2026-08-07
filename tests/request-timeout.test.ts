@@ -7,11 +7,16 @@ import {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("model request timeout", () => {
   it("rejects a request that never settles", async () => {
     vi.useFakeTimers();
+    vi.stubGlobal("window", {
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout
+    });
     const request = withTimeout(new Promise<never>(() => undefined), 90_000, "模型请求超时");
     const assertion = expect(request).rejects.toMatchObject({
       name: "RequestTimeoutError",
@@ -24,6 +29,10 @@ describe("model request timeout", () => {
   });
 
   it("returns a response received before the deadline", async () => {
+    vi.stubGlobal("window", {
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout
+    });
     await expect(withTimeout(Promise.resolve("完成"), 90_000, "模型请求超时"))
       .resolves.toBe("完成");
   });

@@ -1,4 +1,5 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab } from "obsidian";
+import type { SettingDefinitionItem } from "obsidian";
 import { DEFAULT_PROFILE_CONFIG } from "./core/profile";
 import {
   DEFAULT_RETRIEVAL_RANGE,
@@ -111,127 +112,188 @@ export function legacyApiKeySecretName(data: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+type WikiCopilotSettingKey =
+  | "provider"
+  | "serviceName"
+  | "endpoint"
+  | "model"
+  | "retrievalRange";
+
 export class WikiCopilotSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: WikiCopilotPlugin) {
     super(app, plugin);
   }
 
-  override display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.addClass("wiki-copilot-settings");
-
-    containerEl.createEl("h2", { text: "Wiki Copilot" });
-    containerEl.createEl("p", {
-      text: "Wiki Copilot 是面向持久化 LLM Wiki 的知识库问答插件。它优先检索 Wiki 中沉淀的知识，并按需回查稳定原文，生成带来源引用的回答。"
-    });
-
-    containerEl.createEl("h3", { text: "模型服务" });
-    new Setting(containerEl)
-      .setName("服务商")
-      .setDesc("选择后自动配置兼容接口地址和常用模型。")
-      .addDropdown((dropdown) => dropdown
-        .addOption("deepseek", "DeepSeek")
-        .addOption("openai", "OpenAI")
-        .addOption("custom", "其他 OpenAI 兼容服务")
-        .setValue(this.plugin.settings.model.provider)
-        .onChange(async (value) => {
-          if (!isModelProvider(value)) {
-            return;
-          }
-          this.plugin.settings.model.provider = value;
-          this.plugin.settings.model.endpoint = providerEndpoint(value);
-          this.plugin.settings.model.model = defaultModelForProvider(value);
-          await this.plugin.saveSettings();
-          this.display();
-        }));
-
-    if (this.plugin.settings.model.provider === "custom") {
-      new Setting(containerEl)
-        .setName("服务名称")
-        .setDesc("用于回答等待提示，例如“硅基流动思考中…”。")
-        .addText((text) => text
-          .setPlaceholder("例如：硅基流动")
-          .setValue(this.plugin.settings.model.serviceName)
-          .onChange(async (value) => {
-            this.plugin.settings.model.serviceName = value.trim();
-            await this.plugin.saveSettings();
-          }));
-
-      new Setting(containerEl)
-        .setName("接口地址")
-        .setDesc("填写 API 根地址，或完整的 /chat/completions 地址。")
-        .addText((text) => text
-          .setPlaceholder("https://example.com/v1")
-          .setValue(this.plugin.settings.model.endpoint)
-          .onChange(async (value) => {
-            this.plugin.settings.model.endpoint = value.trim();
-            await this.plugin.saveSettings();
-          }));
+  override getSettingDefinitions(): SettingDefinitionItem<WikiCopilotSettingKey>[] {
+    const provider = this.plugin.settings.model.provider;
+    const selectedModel = this.plugin.settings.model.model;
+    const modelOptions = Object.fromEntries(
+      providerModels(provider).map((option) => [option.id, option.label])
+    );
+    if (selectedModel && !(selectedModel in modelOptions)) {
+      modelOptions[selectedModel] = `${selectedModel}（当前配置）`;
     }
 
-    const modelSetting = new Setting(containerEl)
-      .setName("模型")
-      .setDesc(this.plugin.settings.model.provider === "custom"
-        ? "填写服务商提供的模型 ID。"
-        : `接口地址自动使用 ${MODEL_PROVIDER_PRESETS[this.plugin.settings.model.provider].endpoint}`);
-    if (this.plugin.settings.model.provider === "custom") {
-      modelSetting.addText((text) => text
-        .setPlaceholder("模型 ID")
-        .setValue(this.plugin.settings.model.model)
-        .onChange(async (value) => {
+    return [
+      {
+        name: "Wiki Copilot",
+        desc: "面向持久化 LLM Wiki 的知识库问答插件。优先检索沉淀知识，按需核对稳定原文，并生成带来源引用的回答。",
+        render: (setting) => {
+          setting
+            .setName("Wiki Copilot")
+            .setDesc("面向持久化 LLM Wiki 的知识库问答插件。优先检索沉淀知识，按需核对稳定原文，并生成带来源引用的回答。")
+            .setHeading();
+        }
+      },
+      {
+        type: "group",
+        heading: "模型服务",
+        items: [
+          {
+            name: "服务商",
+            desc: "选择后自动配置兼容接口地址和常用模型。",
+            control: {
+              type: "dropdown",
+              key: "provider",
+              options: {
+                deepseek: "DeepSeek",
+                openai: "OpenAI",
+                custom: "其他 OpenAI 兼容服务"
+              }
+            }
+          },
+          {
+            name: "服务名称",
+            desc: "用于回答等待提示，例如“硅基流动思考中…”。",
+            visible: () => this.plugin.settings.model.provider === "custom",
+            control: {
+              type: "text",
+              key: "serviceName",
+              placeholder: "例如：硅基流动"
+            }
+          },
+          {
+            name: "接口地址",
+            desc: "填写 API 根地址，或完整的 /chat/completions 地址。",
+            visible: () => this.plugin.settings.model.provider === "custom",
+            control: {
+              type: "text",
+              key: "endpoint",
+              placeholder: "https://example.com/v1"
+            }
+          },
+          provider === "custom"
+            ? {
+              name: "模型",
+              desc: "填写服务商提供的模型 ID。",
+              control: {
+                type: "text",
+                key: "model",
+                placeholder: "模型 ID"
+              }
+            }
+            : {
+              name: "模型",
+              desc: `接口地址自动使用 ${MODEL_PROVIDER_PRESETS[provider].endpoint}`,
+              control: {
+                type: "dropdown",
+                key: "model",
+                options: modelOptions
+              }
+            },
+          {
+            name: "API key",
+            desc: "密钥保存在 Obsidian 安全存储中，不写入插件设置文件。",
+            render: (setting) => {
+              setting
+                .setName("API key")
+                .setDesc("密钥保存在 Obsidian 安全存储中，不写入插件设置文件。")
+                .addText((text) => {
+                  text.inputEl.type = "password";
+                  text.inputEl.autocomplete = "off";
+                  return text
+                    .setPlaceholder(provider === "custom" ? "可留空（本地服务）" : "请输入 API key")
+                    .setValue(this.plugin.getApiKey() ?? "")
+                    .onChange(async (value) => {
+                      await this.plugin.setApiKey(value);
+                    });
+                });
+            }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "知识检索",
+        items: [
+          {
+            name: "范围与深度",
+            desc: "每次回答最多参考：低 12 页、中 24 页、高 36 页。档位越高，覆盖越广，等待时间也可能越长。",
+            control: {
+              type: "dropdown",
+              key: "retrievalRange",
+              options: {
+                low: "低（更快）",
+                medium: "中（推荐）",
+                high: "高（更全面）"
+              }
+            }
+          }
+        ]
+      }
+    ];
+  }
+
+  override getControlValue(key: WikiCopilotSettingKey): unknown {
+    switch (key) {
+      case "provider":
+        return this.plugin.settings.model.provider;
+      case "serviceName":
+        return this.plugin.settings.model.serviceName;
+      case "endpoint":
+        return this.plugin.settings.model.endpoint;
+      case "model":
+        return this.plugin.settings.model.model;
+      case "retrievalRange":
+        return this.plugin.settings.retrievalRange;
+    }
+  }
+
+  override async setControlValue(key: WikiCopilotSettingKey, value: unknown): Promise<void> {
+    switch (key) {
+      case "provider":
+        if (!isModelProvider(value)) {
+          return;
+        }
+        this.plugin.settings.model.provider = value;
+        this.plugin.settings.model.endpoint = providerEndpoint(value);
+        this.plugin.settings.model.model = defaultModelForProvider(value);
+        await this.plugin.saveSettings();
+        this.update();
+        return;
+      case "serviceName":
+        if (typeof value === "string") {
+          this.plugin.settings.model.serviceName = value.trim();
+        }
+        break;
+      case "endpoint":
+        if (typeof value === "string") {
+          this.plugin.settings.model.endpoint = value.trim();
+        }
+        break;
+      case "model":
+        if (typeof value === "string") {
           this.plugin.settings.model.model = value.trim();
-          await this.plugin.saveSettings();
-        }));
-    } else {
-      modelSetting.addDropdown((dropdown) => {
-        for (const option of providerModels(this.plugin.settings.model.provider)) {
-          dropdown.addOption(option.id, option.label);
         }
-        const selected = this.plugin.settings.model.model;
-        if (selected && !providerModels(this.plugin.settings.model.provider).some((option) => option.id === selected)) {
-          dropdown.addOption(selected, `${selected}（当前配置）`);
+        break;
+      case "retrievalRange":
+        if (!isRetrievalRange(value)) {
+          return;
         }
-        return dropdown
-          .setValue(selected)
-          .onChange(async (value) => {
-            this.plugin.settings.model.model = value;
-            await this.plugin.saveSettings();
-          });
-      });
+        this.plugin.settings.retrievalRange = value;
+        this.plugin.settings.retrieval = retrievalOptionsForRange(value);
+        break;
     }
-
-    new Setting(containerEl)
-      .setName("API Key")
-      .setDesc("直接填写即可。密钥保存在 Obsidian 的安全存储中，不写入插件设置文件。")
-      .addText((text) => {
-        text.inputEl.type = "password";
-        text.inputEl.autocomplete = "off";
-        return text
-          .setPlaceholder(this.plugin.settings.model.provider === "custom" ? "可留空（本地服务）" : "请输入 API Key")
-          .setValue(this.plugin.getApiKey() ?? "")
-          .onChange(async (value) => {
-            await this.plugin.setApiKey(value);
-          });
-      });
-
-    containerEl.createEl("h3", { text: "知识检索" });
-    new Setting(containerEl)
-      .setName("范围与深度")
-      .setDesc("控制每次回答最多参考的知识页面：低 12 页、中 24 页、高 36 页。档位越高，覆盖越广，等待时间也可能越长。")
-      .addDropdown((dropdown) => dropdown
-        .addOption("low", "低（更快）")
-        .addOption("medium", "中（推荐）")
-        .addOption("high", "高（更全面）")
-        .setValue(this.plugin.settings.retrievalRange)
-        .onChange(async (value) => {
-          if (!isRetrievalRange(value)) {
-            return;
-          }
-          this.plugin.settings.retrievalRange = value;
-          this.plugin.settings.retrieval = retrievalOptionsForRange(value);
-          await this.plugin.saveSettings();
-        }));
-
+    await this.plugin.saveSettings();
   }
 }

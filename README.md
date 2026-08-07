@@ -99,6 +99,20 @@ Wiki Copilot 是一个面向 **persistent LLM Wiki** 的 Obsidian 问答插件�
 - 当前使用非流式 OpenAI-compatible Chat Completions 请求。
 - 首版不自动把高质量回答写回 Wiki。
 
+## Roadmap
+
+### 下一步：流式输出
+
+- 使用 OpenAI-compatible 流式响应，逐步显示模型回答，缩短首次内容出现前的等待时间。
+- 支持中止当前回答，并完善流式 Markdown、错误恢复和超时处理。
+- 对不支持流式响应的服务保留非流式兼容模式。
+
+### 后续：Embedding 混合检索
+
+- 增加可选的 Embedding 语义召回，用于补充同义表达和关键词不重合的内容。
+- 保留现有关键词、技术标识符、Wikilink 和 Wiki 分层检索，并与向量结果融合排序。
+- 优先考虑移动端的索引体积、构建耗时、缓存恢复和服务配置体验。
+
 ## 开发
 
 ```bash

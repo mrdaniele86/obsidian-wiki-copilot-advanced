@@ -6,14 +6,62 @@ export interface CitationCheck {
   invalidIds: string[];
 }
 
-const CITATION = /\[S(\d+)\]/gu;
+const CITATION = /\[S(\d+)\]/giu;
+const SOURCE_IDS = /S(\d+)/giu;
+const COMBINED_SQUARE_CITATION = /\[((?:S\d+)(?:\s*(?:[/／、,，&＆]|和|及)\s*S\d+)+)\]/giu;
+const PARENTHESIZED_CITATION_START = /([（(])(\s*)((?:S\d+)(?:\s*(?:[/／、,，&＆]|和|及)\s*S\d+)*)(?=\s*(?:[，,：:；;）)]|\s))/giu;
+const BARE_COMBINED_CITATION = /(^|[^\p{L}\p{N}_[])((?:S\d+)(?:\s*(?:[/／、,，&＆]|和|及)\s*S\d+)+)(?=$|[^\p{L}\p{N}_\]])/gimu;
+const PROTECTED_MARKDOWN = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|!?\[[^\]\n]+\]\([^)]+\)|\[\[[^\]\n]+\]\])/gu;
+
+function normalizeCitationGroup(group: string, validIds: ReadonlySet<string>): string | null {
+  const ids = [...group.matchAll(SOURCE_IDS)].map((match) => `S${match[1] ?? ""}`);
+  if (ids.length === 0 || ids.some((id) => !validIds.has(id))) {
+    return null;
+  }
+  return ids.map((id) => `[${id}]`).join("");
+}
+
+function normalizeProseCitations(markdown: string, validIds: ReadonlySet<string>): string {
+  return markdown
+    .replace(COMBINED_SQUARE_CITATION, (marker, group: string) => (
+      normalizeCitationGroup(group, validIds) ?? marker
+    ))
+    .replace(
+      PARENTHESIZED_CITATION_START,
+      (marker, opening: string, whitespace: string, group: string) => {
+        const normalized = normalizeCitationGroup(group, validIds);
+        return normalized ? `${opening}${whitespace}${normalized}` : marker;
+      }
+    )
+    .replace(BARE_COMBINED_CITATION, (marker, prefix: string, group: string) => {
+      const normalized = normalizeCitationGroup(group, validIds);
+      return normalized ? `${prefix}${normalized}` : marker;
+    });
+}
+
+/**
+ * Repairs common model citation variants without touching unknown source IDs,
+ * code, Wikilinks, or ordinary Markdown links.
+ */
+export function normalizeAnswerCitations(markdown: string, sources: SourceReference[]): string {
+  const validIds = new Set(sources.map((source) => source.id));
+  if (validIds.size === 0) {
+    return markdown;
+  }
+
+  return markdown
+    .split(PROTECTED_MARKDOWN)
+    .map((segment, index) => index % 2 === 1 ? segment : normalizeProseCitations(segment, validIds))
+    .join("");
+}
 
 export function validateAnswerCitations(markdown: string, sources: SourceReference[]): CitationCheck {
+  const normalizedMarkdown = normalizeAnswerCitations(markdown, sources);
   const validIds = new Set(sources.map((source) => source.id));
   const citedIds = new Set<string>();
   const invalidIds = new Set<string>();
 
-  for (const match of markdown.matchAll(CITATION)) {
+  for (const match of normalizedMarkdown.matchAll(CITATION)) {
     const id = `S${match[1] ?? ""}`;
     if (validIds.has(id)) {
       citedIds.add(id);
@@ -32,8 +80,8 @@ export function validateAnswerCitations(markdown: string, sources: SourceReferen
 
   return {
     markdown: warnings.length > 0
-      ? `${markdown.trim()}\n\n> [!warning] Wiki Copilot 引用检查\n> ${warnings.join(" ")}`
-      : markdown,
+      ? `${normalizedMarkdown.trim()}\n\n> [!warning] Wiki Copilot 引用检查\n> ${warnings.join(" ")}`
+      : normalizedMarkdown,
     citedIds: [...citedIds],
     invalidIds: [...invalidIds]
   };
@@ -52,7 +100,7 @@ export function citationIdFromText(text: string): string | null {
 /** Converts valid [S1] markers into superscript Obsidian links at render time. */
 export function linkifyAnswerCitations(markdown: string, sources: SourceReference[]): string {
   const byId = new Map(sources.map((source) => [source.id, source]));
-  return markdown.replace(CITATION, (marker, digits: string) => {
+  return normalizeAnswerCitations(markdown, sources).replace(CITATION, (marker, digits: string) => {
     const id = `S${digits}`;
     const source = byId.get(id);
     if (!source || source.path.includes("]") || source.path.includes("|")) {

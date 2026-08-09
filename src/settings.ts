@@ -140,6 +140,7 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
         desc: "面向持久化 LLM Wiki 的知识库问答插件。优先检索沉淀知识，按需核对稳定原文，并生成带来源引用的回答。",
         render: (setting) => {
           setting
+            .setClass("wiki-copilot-settings-intro")
             .setName("Wiki Copilot")
             .setDesc("面向持久化 LLM Wiki 的知识库问答插件。优先检索沉淀知识，按需核对稳定原文，并生成带来源引用的回答。")
             .setHeading();

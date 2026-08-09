@@ -1,5 +1,5 @@
 import { chunkMarkdown } from "./markdown-chunker";
-import { yieldToUi } from "./cooperative";
+import { CooperativeScheduler } from "./cooperative";
 import { tokenizeForSearch } from "./tokenizer";
 import type { MarkdownChunk } from "./types";
 
@@ -44,15 +44,14 @@ export async function selectRelevantEvidenceChunksAsync(
   const queryTokens = new Set(tokenizeForSearch(query));
   const normalizedQuery = query.normalize("NFKC").toLocaleLowerCase().trim();
   const scored: ScoredEvidenceChunk[] = [];
+  const scheduler = new CooperativeScheduler(8, 32);
 
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
     if (chunk) {
       scored.push(scoreChunk(chunk, queryTokens, normalizedQuery));
     }
-    if ((index + 1) % 8 === 0) {
-      await yieldToUi();
-    }
+    await scheduler.checkpoint();
   }
   return selectTopChunks(chunks, scored, limit);
 }

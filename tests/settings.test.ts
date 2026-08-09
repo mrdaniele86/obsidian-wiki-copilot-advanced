@@ -8,7 +8,8 @@ vi.mock("obsidian", () => ({
 
 import {
   DEFAULT_SETTINGS,
-  loadWikiCopilotSettings
+  loadWikiCopilotSettings,
+  WikiCopilotSettingTab
 } from "../src/settings";
 
 describe("retrieval range settings", () => {
@@ -57,5 +58,52 @@ describe("retrieval range settings", () => {
 
     expect(settings.retrievalRange).toBe("medium");
     expect(settings.retrieval.maxContextCharacters).toBe(30_000);
+  });
+});
+
+describe("model response mode settings", () => {
+  it("does not expose a response-mode choice in settings", () => {
+    const plugin = {
+      settings: loadWikiCopilotSettings(undefined),
+      getApiKey: () => null
+    };
+    const tab = new WikiCopilotSettingTab({} as never, plugin as never);
+    const definitions = tab.getSettingDefinitions() as unknown as Array<{
+      name?: string;
+      items?: Array<{ name?: string }>;
+    }>;
+    const names = definitions.flatMap((definition) => [
+      definition.name,
+      ...(definition.items ?? []).map((item) => item.name)
+    ]);
+
+    expect(names).not.toContain("回答方式");
+  });
+});
+
+describe("settings presentation", () => {
+  it("marks the plugin introduction for spacious mobile styling", () => {
+    const plugin = {
+      settings: loadWikiCopilotSettings(undefined),
+      getApiKey: () => null
+    };
+    const tab = new WikiCopilotSettingTab({} as never, plugin as never);
+    const intro = tab.getSettingDefinitions()[0] as {
+      render: (setting: unknown, group: unknown) => void;
+    };
+    const setting = {
+      setClass: vi.fn(),
+      setName: vi.fn(),
+      setDesc: vi.fn(),
+      setHeading: vi.fn()
+    };
+    for (const method of Object.values(setting)) {
+      method.mockReturnValue(setting);
+    }
+
+    intro.render(setting, {});
+
+    expect(setting.setClass).toHaveBeenCalledWith("wiki-copilot-settings-intro");
+    expect(setting.setHeading).toHaveBeenCalledOnce();
   });
 });

@@ -101,6 +101,11 @@ export interface AnswerResult {
   knowledgeBaseHit: boolean;
 }
 
+export interface AnswerRetrievalMetrics {
+  contextCharacters: number;
+  sourceCount: number;
+}
+
 export const SYNTHESIS_ROLES: ReadonlySet<KnowledgeRole> = new Set([
   "topic",
   "concept",

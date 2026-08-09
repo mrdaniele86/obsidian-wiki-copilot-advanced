@@ -6,6 +6,8 @@ import {
   diffFileManifests,
   INDEX_CACHE_VERSION,
   indexSettingsKey,
+  isIndexCacheSnapshot,
+  MOBILE_INDEX_CACHE_SNAPSHOT_POLICY,
   parseIndexCacheSnapshot
 } from "../src/obsidian/index-cache";
 import type { IndexCacheSnapshot } from "../src/obsidian/index-cache";
@@ -68,15 +70,33 @@ function snapshot(): IndexCacheSnapshot {
     files: [{ path: metadata.path, mtime: 10, size: 20 }],
     searchIndex: searchIndex.createSnapshot(),
     sourceCatalog: [],
-    evidenceReferences: []
+    evidenceReferences: [],
+    linkGraph: [[metadata.path, [["raw/processed/ms6.md", 1]]]]
   };
 }
 
 describe("index cache metadata", () => {
   it("round-trips a valid cache and rejects corrupt data", () => {
-    expect(parseIndexCacheSnapshot(JSON.stringify(snapshot()))).not.toBeNull();
+    const current = snapshot();
+    const { linkGraph: _linkGraph, ...legacy } = current;
+
+    expect(parseIndexCacheSnapshot(JSON.stringify(current))).not.toBeNull();
+    expect(parseIndexCacheSnapshot(JSON.stringify(legacy))).not.toBeNull();
     expect(parseIndexCacheSnapshot("{broken")).toBeNull();
-    expect(parseIndexCacheSnapshot(JSON.stringify({ ...snapshot(), version: 999 }))).toBeNull();
+    expect(parseIndexCacheSnapshot(JSON.stringify({ ...current, version: 999 }))).toBeNull();
+    expect(parseIndexCacheSnapshot(JSON.stringify({
+      ...current,
+      linkGraph: [["wiki/concepts/MS6.md", [["raw/processed/ms6.md", 0]]]]
+    }))).toBeNull();
+  });
+
+  it("accepts document-only snapshots for device-local storage but not JSON files", () => {
+    const mobile = snapshot();
+    mobile.searchIndex.index = null;
+    delete mobile.linkGraph;
+
+    expect(isIndexCacheSnapshot(mobile, MOBILE_INDEX_CACHE_SNAPSHOT_POLICY)).toBe(true);
+    expect(parseIndexCacheSnapshot(JSON.stringify(mobile))).toBeNull();
   });
 
   it("detects added, changed, and removed Markdown files", () => {

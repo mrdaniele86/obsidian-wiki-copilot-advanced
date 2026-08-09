@@ -18,9 +18,17 @@ Wiki Copilot 是面向 Karpathy `llm-wiki` 理念的 Obsidian 知识库问答插
 
 按以下顺序推进，除非用户明确调整：
 
-1. 在真实 Android / iOS 设备上确认安装、设置、索引、缓存恢复、提问、引用跳转和临时页面均正常，并解决移动端内存与响应性问题。
-2. 实现 OpenAI-compatible 流式输出、取消回答、增量 Markdown 渲染、错误恢复和非流式回退。
-3. 增加可选 Embedding 混合检索；必须保留现有关键词、技术标识符、Wikilink 和 Wiki 分层检索，并融合排序。
+1. 增加“问答提炼并保存”：把用户确认的高质量回答整理为可审阅的 Wiki 草稿，保存前允许修改目标、标题和正文，保留来源引用与证据映射；未经确认不得写入，且不得自动修改 `raw/`。
+2. 增加可选 Embedding 混合检索；必须保留现有关键词、精确标识符、Wikilink 和 Wiki 分层检索，并融合排序，同时控制移动端索引体积、恢复成本和隐私边界。
+
+移动端稳定性、流式兼容、引用跳转和缓存恢复是每个版本的持续发布验收项，不作为独立功能 Todo。
+
+### 同类实现参考
+
+- [Obsidian Copilot](https://github.com/logancyang/obsidian-copilot)：参考其 query-time lexical candidate scan、临时索引内存预算、增量索引和索引诊断；Wiki Copilot 仍保留自己的 Schema/Wiki/source 分层与确定性精确标识符约束。
+- [Smart Connections](https://github.com/brianpetro/obsidian-smart-connections) / [Smart Environment](https://github.com/brianpetro/obsidian-smart-env)：参考其 Vault 文件事件、可检查的来源状态、移动端分片阈值和逐项修复思路；不要直接复制其 embedding 数据模型。
+- [Khoj](https://github.com/khoj-ai/khoj)：其统一服务器索引可实现最强跨设备一致性，但会引入上传、自托管和账户依赖；除非用户明确选择服务器路线，否则不作为默认架构。
+- 采用同类机制前必须核对其最新源码和许可，并用本项目自己的实现与测试落地，不复制大段源码。
 
 ## 3. 目录与关键模块
 
@@ -60,13 +68,14 @@ pnpm install
 常用命令：
 
 ```bash
+pnpm lint
 pnpm test
 pnpm build
 pnpm check
 pnpm deploy
 ```
 
-每次功能或修复至少执行 `pnpm check`。涉及 UI、索引、缓存、移动端兼容或引用打开时，还应在真实 Obsidian 中做对应冒烟测试。不要只以 TypeScript 编译成功作为完成标准。
+`pnpm check` 会依次执行 Obsidian 官方 ESLint 规则、Vitest 和生产构建。每次功能或修复至少执行该命令。涉及 UI、索引、缓存、移动端兼容或引用打开时，还应在真实 Obsidian 中做对应冒烟测试。不要只以 TypeScript 编译成功作为完成标准。
 
 部署到自定义 Vault：
 
@@ -93,7 +102,7 @@ pnpm deploy
 5. Release 必须附带 `main.js`、`manifest.json`、`styles.css`。
 6. 在 Obsidian Community 插件后台确认新版本已识别并通过自动检查。
 
-远程仓库当前为 `https://github.com/deanxizian/obisidian-wiki-copilot`；仓库名中的 `obisidian` 拼写是既有事实，不要擅自更名。
+远程仓库当前为 `https://github.com/deanxizian/obsidian-wiki-copilot`；本地项目目录与远程仓库统一使用 `obsidian-wiki-copilot`。
 
 ## 7. 修改原则
 
@@ -103,4 +112,3 @@ pnpm deploy
 - 不提交 API key、Vault 私有内容、索引缓存、插件 `data.json` 或临时文件。
 - 改动检索排序时，同时验证精确型号、文档号、中文查询、枚举型问题和普通自然语言问题。
 - 改动索引生命周期时，同时验证首次构建、缓存恢复、增量更新、手动重建和重启 Obsidian。
-

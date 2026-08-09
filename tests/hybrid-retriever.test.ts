@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { EvidenceReferenceMap } from "../src/core/evidence-references";
-import { hasBreadthIntent, HybridWikiRetriever } from "../src/core/hybrid-retriever";
+import { HybridWikiRetriever } from "../src/core/hybrid-retriever";
 import type { EvidenceNote } from "../src/core/hybrid-retriever";
 import { LinkGraph } from "../src/core/link-graph";
+import { hasBreadthIntent } from "../src/core/retrieval-query";
 import { WikiSearchIndex } from "../src/core/search-index";
 import { SourceCatalogIndex } from "../src/core/source-catalog";
 import type { NoteMetadata } from "../src/core/types";
@@ -91,6 +92,180 @@ describe("HybridWikiRetriever", () => {
     });
 
     expect(result.chunks.map((chunk) => chunk.path)).toEqual([specificationA, specificationB]);
+
+    const expanded = await retriever.retrieve("列出所有MS6技术条件号", {
+      maxIndexResults: 0,
+      maxTopicConceptResults: 0,
+      maxSummaryResults: 0,
+      maxWikiResults: 0,
+      maxStableSourceResults: 2,
+      maxPendingResults: 0,
+      maxRetrievedPages: 4,
+      maxEvidenceFiles: 3,
+      maxContextCharacters: 10_000,
+      graphExpansion: false
+    });
+
+    expect(expanded.chunks.map((chunk) => chunk.path)).toHaveLength(3);
+    expect(expanded.chunks.map((chunk) => chunk.path))
+      .toEqual(expect.arrayContaining([specificationA, specificationB, usage]));
+    catalog.destroy();
+  });
+
+  it("reserves a tight breadth-query budget for canonical source evidence", async () => {
+    const primary = new WikiSearchIndex();
+    const graph = new LinkGraph();
+    const catalog = new SourceCatalogIndex();
+    const references = new EvidenceReferenceMap();
+    const summaryPath = "wiki/summaries/MS6端口目录摘要.md";
+    const sourceA = "raw/processed/MS6-port-a.md";
+    const sourceB = "raw/processed/MS6-port-b.md";
+    primary.replaceNote(
+      metadata(summaryPath, "summary"),
+      `# MS6 端口目录摘要\n\n${"MS6 端口定义目录。".repeat(240)}`
+    );
+    await catalog.replaceBatchAsync([sourceA, sourceB].map((path, index) => ({
+      path,
+      title: `MS6 端口定义 ${index + 1}`,
+      aliases: "",
+      tags: "",
+      headings: "端口定义",
+      role: "stable-source" as const
+    })));
+    const notes = new Map<string, EvidenceNote>([
+      [sourceA, {
+        metadata: metadata(sourceA, "stable-source"),
+        markdown: "# MS6 端口定义 1\n\nJP1：电源与通信端口。"
+      }],
+      [sourceB, {
+        metadata: metadata(sourceB, "stable-source"),
+        markdown: "# MS6 端口定义 2\n\nJP2：输入输出端口。"
+      }]
+    ]);
+    const retriever = new HybridWikiRetriever(
+      primary,
+      graph,
+      catalog,
+      references,
+      async (paths) => paths
+        .map((path) => notes.get(path))
+        .filter((note): note is EvidenceNote => note !== undefined)
+    );
+
+    const result = await retriever.retrieve("列出所有 MS6 端口定义", {
+      maxIndexResults: 0,
+      maxTopicConceptResults: 0,
+      maxSummaryResults: 1,
+      maxWikiResults: 0,
+      maxStableSourceResults: 2,
+      maxPendingResults: 0,
+      maxRetrievedPages: 3,
+      maxEvidenceFiles: 2,
+      maxContextCharacters: 800,
+      graphExpansion: false
+    });
+
+    expect(result.chunks.map((chunk) => chunk.path)).toEqual([sourceA, sourceB]);
+    expect(result.chunks.every((chunk) => chunk.role === "stable-source")).toBe(true);
+    catalog.destroy();
+  });
+
+  it("puts canonical evidence before generated summaries for an exact identifier query", async () => {
+    const primary = new WikiSearchIndex();
+    const graph = new LinkGraph();
+    const catalog = new SourceCatalogIndex();
+    const references = new EvidenceReferenceMap();
+    const summaryPath = "wiki/summaries/ZX9端口摘要.md";
+    const sourcePath = "raw/processed/ZX9-port-definition.md";
+    primary.replaceNote(
+      metadata(summaryPath, "summary"),
+      "# ZX9 端口摘要\n\n## 相关概念\n\n接口附件、信号显示和软件信息。"
+    );
+    await catalog.replaceBatchAsync([{
+      path: sourcePath,
+      title: "ZX9 端口定义",
+      aliases: "",
+      tags: "",
+      headings: "板上端子列表 端子信号定义",
+      role: "stable-source"
+    }]);
+    const retriever = new HybridWikiRetriever(
+      primary,
+      graph,
+      catalog,
+      references,
+      async () => [{
+        metadata: metadata(sourcePath, "stable-source"),
+        markdown: "# ZX9 端口定义\n\n## 板上端子列表\n\nJP1：24V / GND / CAN-H / CAN-L。"
+      }]
+    );
+
+    const result = await retriever.retrieve("ZX9端口定义", {
+      maxRetrievedPages: 4,
+      maxEvidenceFiles: 2,
+      maxContextCharacters: 4_000,
+      graphExpansion: false
+    });
+
+    expect(result.chunks[0]).toMatchObject({
+      path: sourcePath,
+      role: "stable-source"
+    });
+    expect(result.chunks.some((chunk) => chunk.path === summaryPath)).toBe(true);
+    catalog.destroy();
+  });
+
+  it("does not clear reusable evidence in the middle of a breadth query", async () => {
+    const primary = new WikiSearchIndex();
+    const graph = new LinkGraph();
+    const catalog = new SourceCatalogIndex({ useWorker: false });
+    const references = new EvidenceReferenceMap();
+    const notes = new Map<string, EvidenceNote>();
+    const documents = ["AA1", "BB2", "CC3"].flatMap((identifier) =>
+      Array.from({ length: 16 }, (_, index) => {
+        const path = `raw/processed/${identifier}-power-${String(index + 1).padStart(2, "0")}.md`;
+        notes.set(path, {
+          metadata: metadata(path, "stable-source"),
+          markdown: `# ${identifier} 功耗 ${index + 1}\n\n${identifier} 功耗为 ${index + 1} W。`
+        });
+        return {
+          path,
+          title: `${identifier} 功耗 ${index + 1}`,
+          aliases: "",
+          tags: "",
+          headings: "功耗",
+          role: "stable-source" as const
+        };
+      })
+    );
+    await catalog.replaceBatchAsync(documents);
+    const retriever = new HybridWikiRetriever(
+      primary,
+      graph,
+      catalog,
+      references,
+      async (paths) => paths
+        .map((path) => notes.get(path))
+        .filter((note): note is EvidenceNote => note !== undefined)
+    );
+    const options = {
+      maxIndexResults: 0,
+      maxTopicConceptResults: 0,
+      maxSummaryResults: 0,
+      maxWikiResults: 0,
+      maxStableSourceResults: 10,
+      maxPendingResults: 0,
+      maxRetrievedPages: 20,
+      maxEvidenceFiles: 12,
+      maxContextCharacters: 20_000,
+      graphExpansion: false
+    };
+
+    for (const identifier of ["AA1", "BB2", "CC3", "CC3"]) {
+      const result = await retriever.retrieve(`所有 ${identifier} 功耗`, options);
+      expect(result.chunks).toHaveLength(12);
+      expect(result.chunks.every((chunk) => chunk.path.includes(identifier))).toBe(true);
+    }
     catalog.destroy();
   });
 

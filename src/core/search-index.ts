@@ -2,7 +2,8 @@ import MiniSearch from "minisearch";
 import type { AsPlainObject, Options } from "minisearch";
 import { CooperativeScheduler, yieldToUi } from "./cooperative";
 import type { YieldControl } from "./cooperative";
-import { chunkMarkdown } from "./markdown-chunker";
+import { chunkMarkdown, compactMarkdownChunks } from "./markdown-chunker";
+import { matchesTechnicalIdentifierFamily } from "./retrieval-query";
 import { containsCjk, technicalIdentifierTokens, tokenizeForSearch } from "./tokenizer";
 import { roleToEvidenceTier } from "./types";
 import type { MarkdownChunk, NoteMetadata, SearchDocument } from "./types";
@@ -18,18 +19,37 @@ export interface SearchIndexStats {
 }
 
 export interface WikiSearchIndexSnapshot {
-  index: AsPlainObject;
+  index: AsPlainObject | null;
   documents: SearchDocument[];
 }
 
+export interface WikiSearchIndexSnapshotOptions {
+  includeSerializedIndex?: boolean;
+}
+
+export interface WikiSearchIndexOptions {
+  compactDocuments?: boolean;
+}
+
 const SEARCH_FIELDS = ["title", "aliases", "heading", "tags", "path", "text"] as const;
+
+interface IndexRestoreDocumentState {
+  visibilityState?: DocumentVisibilityState;
+  hasFocus?: () => boolean;
+}
+
+export function shouldRestoreIndexSynchronously(
+  documentState: IndexRestoreDocumentState | null = typeof document === "undefined" ? null : document
+): boolean {
+  return documentState?.visibilityState === "hidden" || documentState?.hasFocus?.() === false;
+}
 
 export class WikiSearchIndex {
   private index: MiniSearch<SearchDocument>;
   private readonly documents = new Map<string, SearchDocument>();
   private readonly pathToDocumentIds = new Map<string, string[]>();
 
-  constructor() {
+  constructor(private readonly options: WikiSearchIndexOptions = {}) {
     this.index = this.createIndex();
   }
 
@@ -39,7 +59,11 @@ export class WikiSearchIndex {
       fields: [...SEARCH_FIELDS],
       storeFields: [],
       tokenize: tokenizeForSearch,
-      processTerm: (term) => term
+      processTerm: (term) => term,
+      // MiniSearch vacuums discarded documents on background timers by default.
+      // Obsidian WebViews can resume those timers while an index is being mutated,
+      // so lifecycle-owned rebuilds are safer than concurrent auto-vacuuming.
+      autoVacuum: false
     };
   }
 
@@ -48,7 +72,7 @@ export class WikiSearchIndex {
   }
 
   replaceNote(metadata: NoteMetadata, markdown: string): SearchDocument[] {
-    return this.replaceChunks(metadata, chunkMarkdown(metadata.path, markdown));
+    return this.replaceChunks(metadata, this.chunksForNote(metadata.path, markdown));
   }
 
   replaceChunks(metadata: NoteMetadata, chunks: MarkdownChunk[]): SearchDocument[] {
@@ -74,7 +98,13 @@ export class WikiSearchIndex {
     markdown: string,
     yieldControl: YieldControl = yieldToUi
   ): Promise<SearchDocument[]> {
-    return this.replaceChunksAsync(metadata, chunkMarkdown(metadata.path, markdown), yieldControl);
+    return this.replaceChunksAsync(metadata, this.chunksForNote(metadata.path, markdown), yieldControl);
+  }
+
+  private chunksForNote(path: string, markdown: string): MarkdownChunk[] {
+    return this.options.compactDocuments
+      ? compactMarkdownChunks(path, markdown)
+      : chunkMarkdown(path, markdown);
   }
 
   async replaceChunksAsync(
@@ -133,28 +163,38 @@ export class WikiSearchIndex {
     this.pathToDocumentIds.clear();
   }
 
-  createSnapshot(): WikiSearchIndexSnapshot {
+  createSnapshot(options: WikiSearchIndexSnapshotOptions = {}): WikiSearchIndexSnapshot {
     return {
-      index: this.index.toJSON(),
+      index: options.includeSerializedIndex === false ? null : this.index.toJSON(),
       documents: [...this.documents.values()]
     };
   }
 
   async restoreSnapshot(snapshot: WikiSearchIndexSnapshot): Promise<void> {
-    const restoredIndex = await MiniSearch.loadJSAsync<SearchDocument>(
-      snapshot.index,
-      this.indexOptions()
-    );
+    const restoredIndex = snapshot.index
+      ? shouldRestoreIndexSynchronously()
+        ? MiniSearch.loadJS<SearchDocument>(snapshot.index, this.indexOptions())
+        : await MiniSearch.loadJSAsync<SearchDocument>(snapshot.index, this.indexOptions())
+      : this.createIndex();
     const documents = new Map<string, SearchDocument>();
     const pathToDocumentIds = new Map<string, string[]>();
+    const scheduler = snapshot.index ? null : new CooperativeScheduler();
     for (const document of snapshot.documents) {
-      if (documents.has(document.id) || !restoredIndex.has(document.id)) {
+      if (documents.has(document.id)) {
         throw new Error("Wiki 索引缓存中的文档映射不一致");
+      }
+      if (snapshot.index) {
+        if (!restoredIndex.has(document.id)) {
+          throw new Error("Wiki 索引缓存中的文档映射不一致");
+        }
+      } else {
+        restoredIndex.add(document);
       }
       documents.set(document.id, document);
       const ids = pathToDocumentIds.get(document.path) ?? [];
       ids.push(document.id);
       pathToDocumentIds.set(document.path, ids);
+      await scheduler?.checkpoint();
     }
     if (restoredIndex.documentCount !== documents.size) {
       throw new Error("Wiki 索引缓存中的文档数量不一致");
@@ -187,10 +227,7 @@ export class WikiSearchIndex {
           if (!document) {
             return false;
           }
-          const documentIdentifiers = technicalIdentifierTokens(
-            `${document.title} ${document.aliases} ${document.heading} ${document.tags} ${document.path}`
-          );
-          return documentIdentifiers.some((identifier) => identifierSet.has(identifier));
+          return matchesTechnicalIdentifierFamily([...identifierSet], document);
         })
         .map((result) => ({
           ...result,

@@ -16,6 +16,20 @@ function add(index: WikiSearchIndex, path: string, role: KnowledgeRole, markdown
 }
 
 describe("WikiRetriever", () => {
+  it("applies exact identifier retrieval outside product-model domains", () => {
+    const index = new WikiSearchIndex();
+    const graph = new LinkGraph();
+    add(index, "wiki/summaries/Python 3.md", "summary", "# Python 3\n\n类型标注与迁移说明。");
+    add(index, "wiki/summaries/Python 2.md", "summary", "# Python 2\n\n旧版类型系统说明。");
+
+    const result = new WikiRetriever(index, graph).retrieve("Python3 类型标注", {
+      graphExpansion: false
+    });
+
+    expect(result.chunks.map((chunk) => chunk.path)).toContain("wiki/summaries/Python 3.md");
+    expect(result.chunks.map((chunk) => chunk.path)).not.toContain("wiki/summaries/Python 2.md");
+  });
+
   it("treats an exact technical identifier as an anchor instead of generic query prose", () => {
     const index = new WikiSearchIndex();
     const graph = new LinkGraph();
@@ -27,6 +41,24 @@ describe("WikiRetriever", () => {
     });
 
     expect(result.chunks.map((chunk) => chunk.path)).toEqual(["wiki/summaries/MS6.md"]);
+  });
+
+  it("retains generic Wiki synthesis anchored in body text without admitting a conflicting model", () => {
+    const index = new WikiSearchIndex();
+    const graph = new LinkGraph();
+    add(index, "wiki/summaries/MS6.md", "summary", "# MS6 规范\n\nMS6 功耗资料。");
+    add(index, "wiki/topics/显示板功耗.md", "topic", "# 显示板功耗\n\nMS6 额定功耗汇总。");
+    add(index, "wiki/summaries/MC2功耗.md", "summary", "# MC2 功耗\n\nMC2 与 MS6 功耗对比。");
+
+    const result = new WikiRetriever(index, graph).retrieve("所有MS6功耗", {
+      graphExpansion: false
+    });
+
+    expect(result.chunks.map((chunk) => chunk.path)).toEqual(expect.arrayContaining([
+      "wiki/summaries/MS6.md",
+      "wiki/topics/显示板功耗.md"
+    ]));
+    expect(result.chunks.map((chunk) => chunk.path)).not.toContain("wiki/summaries/MC2功耗.md");
   });
 
   it("prioritizes Wiki synthesis while retaining stable evidence", () => {
@@ -73,6 +105,27 @@ describe("WikiRetriever", () => {
     expect(result.chunks).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: "wiki/concepts/控制器.md", origin: "wikilink" })
     ]));
+  });
+
+  it("does not expand a Wikilink candidate into a second hop", () => {
+    const index = new WikiSearchIndex();
+    const graph = new LinkGraph();
+    add(index, "wiki/topics/入口.md", "topic", "# 入口\n\n唯一检索词 alphaquery。");
+    add(index, "wiki/concepts/一跳.md", "concept", "# 一跳\n\n第一层关联内容。");
+    add(index, "wiki/concepts/二跳.md", "concept", "# 二跳\n\n第二层关联内容。");
+    graph.rebuild({
+      "wiki/topics/入口.md": { "wiki/concepts/一跳.md": 1 },
+      "wiki/concepts/一跳.md": { "wiki/concepts/二跳.md": 1 }
+    });
+
+    const result = new WikiRetriever(index, graph).retrieve("alphaquery", {
+      maxIndexResults: 0,
+      maxSummaryResults: 0,
+      maxStableSourceResults: 0
+    });
+
+    expect(result.chunks.map((chunk) => chunk.path)).toContain("wiki/concepts/一跳.md");
+    expect(result.chunks.map((chunk) => chunk.path)).not.toContain("wiki/concepts/二跳.md");
   });
 
   it("keeps the expanded default evidence quota", () => {

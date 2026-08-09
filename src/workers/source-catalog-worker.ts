@@ -12,7 +12,8 @@ function createIndex(): MiniSearch<SourceCatalogDocument> {
     fields: ["title", "aliases", "headings", "tags", "path"],
     storeFields: [],
     tokenize: tokenizeForSearch,
-    processTerm: (term) => term
+    processTerm: (term) => term,
+    autoVacuum: false
   });
 }
 

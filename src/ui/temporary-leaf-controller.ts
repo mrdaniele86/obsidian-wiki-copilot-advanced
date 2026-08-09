@@ -1,31 +1,35 @@
-export interface TemporaryLeafLike {
+export interface ReusableLeafLike {
   detach(): void;
   getViewState(): { pinned?: boolean };
 }
 
-export class TemporaryLeafController<TLeaf extends TemporaryLeafLike> {
+export interface AcquiredLeaf<TLeaf> {
+  leaf: TLeaf;
+  created: boolean;
+}
+
+export class ReusableLeafController<TLeaf extends ReusableLeafLike> {
   private leaf: TLeaf | null = null;
 
-  track(leaf: TLeaf): void {
-    if (this.leaf === leaf) {
-      return;
+  acquire(createLeaf: () => TLeaf, isAttached: (leaf: TLeaf) => boolean): AcquiredLeaf<TLeaf> {
+    if (this.leaf && isAttached(this.leaf)) {
+      return { leaf: this.leaf, created: false };
     }
-    this.release();
+
+    const leaf = createLeaf();
     this.leaf = leaf;
+    return { leaf, created: true };
   }
 
-  handleActiveLeafChange(activeLeaf: TLeaf | null): void {
-    if (!this.leaf || activeLeaf === this.leaf) {
+  discard(leaf: TLeaf): void {
+    if (this.leaf !== leaf || leaf.getViewState().pinned) {
       return;
     }
-    this.release();
+    this.leaf = null;
+    leaf.detach();
   }
 
   close(): void {
-    this.release();
-  }
-
-  private release(): void {
     const leaf = this.leaf;
     this.leaf = null;
     if (!leaf || leaf.getViewState().pinned) {

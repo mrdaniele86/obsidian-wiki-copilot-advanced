@@ -1,4 +1,5 @@
 import type { DataAdapter } from "obsidian";
+import type { LinkGraphSnapshot } from "../core/link-graph";
 import type { WikiSearchIndexSnapshot } from "../core/search-index";
 import type { SourceCatalogDocument } from "../core/source-catalog";
 import type {
@@ -9,7 +10,7 @@ import type {
 } from "../core/types";
 import type { WikiCopilotSettings } from "../settings";
 
-export const INDEX_CACHE_VERSION = 1;
+export const INDEX_CACHE_VERSION = 3;
 
 export interface FileFingerprint {
   path: string;
@@ -40,12 +41,29 @@ export interface IndexCacheSnapshot {
   searchIndex: WikiSearchIndexSnapshot;
   sourceCatalog: SourceCatalogDocument[];
   evidenceReferences: Array<[string, string[]]>;
+  linkGraph?: LinkGraphSnapshot;
 }
 
 export interface IndexCacheRepository {
+  readonly snapshotPolicy?: IndexCacheSnapshotPolicy;
   load(): Promise<IndexCacheSnapshot | null>;
   save(snapshot: IndexCacheSnapshot): Promise<void>;
 }
+
+export interface IndexCacheSnapshotPolicy {
+  includeSerializedSearchIndex: boolean;
+  includeLinkGraph: boolean;
+}
+
+export const FULL_INDEX_CACHE_SNAPSHOT_POLICY: IndexCacheSnapshotPolicy = {
+  includeSerializedSearchIndex: true,
+  includeLinkGraph: true
+};
+
+export const MOBILE_INDEX_CACHE_SNAPSHOT_POLICY: IndexCacheSnapshotPolicy = {
+  includeSerializedSearchIndex: false,
+  includeLinkGraph: true
+};
 
 const KNOWLEDGE_ROLES = new Set<KnowledgeRole>([
   "schema",
@@ -131,13 +149,28 @@ function isEvidenceReference(value: unknown): value is [string, string[]] {
     isStringArray(value[1]);
 }
 
-export function parseIndexCacheSnapshot(serialized: string): IndexCacheSnapshot | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(serialized);
-  } catch {
-    return null;
-  }
+function isLinkDestination(value: unknown): value is [string, number] {
+  return Array.isArray(value) &&
+    value.length === 2 &&
+    typeof value[0] === "string" &&
+    typeof value[1] === "number" && Number.isFinite(value[1]) && value[1] > 0;
+}
+
+function isLinkGraphSource(value: unknown): value is LinkGraphSnapshot[number] {
+  return Array.isArray(value) &&
+    value.length === 2 &&
+    typeof value[0] === "string" &&
+    Array.isArray(value[1]) && value[1].every(isLinkDestination);
+}
+
+function isLinkGraphSnapshot(value: unknown): value is LinkGraphSnapshot {
+  return Array.isArray(value) && value.every(isLinkGraphSource);
+}
+
+export function isIndexCacheSnapshot(
+  value: unknown,
+  policy: IndexCacheSnapshotPolicy = FULL_INDEX_CACHE_SNAPSHOT_POLICY
+): value is IndexCacheSnapshot {
   if (!isRecord(value) ||
     value.version !== INDEX_CACHE_VERSION ||
     typeof value.createdAt !== "number" ||
@@ -145,13 +178,26 @@ export function parseIndexCacheSnapshot(serialized: string): IndexCacheSnapshot 
     typeof value.queryGuidance !== "string" ||
     !isProfile(value.profile) ||
     !Array.isArray(value.files) || !value.files.every(isFileFingerprint) ||
-    !isRecord(value.searchIndex) || !isRecord(value.searchIndex.index) ||
+    !isRecord(value.searchIndex) ||
+    !(isRecord(value.searchIndex.index) ||
+      (!policy.includeSerializedSearchIndex && value.searchIndex.index === null)) ||
     !Array.isArray(value.searchIndex.documents) || !value.searchIndex.documents.every(isSearchDocument) ||
     !Array.isArray(value.sourceCatalog) || !value.sourceCatalog.every(isSourceCatalogDocument) ||
-    !Array.isArray(value.evidenceReferences) || !value.evidenceReferences.every(isEvidenceReference)) {
+    !Array.isArray(value.evidenceReferences) || !value.evidenceReferences.every(isEvidenceReference) ||
+    (value.linkGraph !== undefined && !isLinkGraphSnapshot(value.linkGraph))) {
+    return false;
+  }
+  return true;
+}
+
+export function parseIndexCacheSnapshot(serialized: string): IndexCacheSnapshot | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized);
+  } catch {
     return null;
   }
-  return value as unknown as IndexCacheSnapshot;
+  return isIndexCacheSnapshot(value) ? value : null;
 }
 
 export function indexSettingsKey(settings: WikiCopilotSettings): string {
@@ -188,6 +234,8 @@ export function diffFileManifests(
 }
 
 export class AdapterIndexCacheRepository implements IndexCacheRepository {
+  readonly snapshotPolicy = FULL_INDEX_CACHE_SNAPSHOT_POLICY;
+
   constructor(
     private readonly adapter: DataAdapter,
     private readonly cachePath: string
@@ -211,5 +259,90 @@ export class AdapterIndexCacheRepository implements IndexCacheRepository {
 
   async save(snapshot: IndexCacheSnapshot): Promise<void> {
     await this.adapter.write(this.cachePath, JSON.stringify(snapshot));
+  }
+}
+
+const INDEXED_DB_NAME = "wiki-copilot-index-cache";
+const INDEXED_DB_STORE = "snapshots";
+const INDEXED_DB_VERSION = 2;
+
+function requestResult<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB 请求失败"));
+  });
+}
+
+function transactionComplete(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB 事务失败"));
+    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB 事务已中止"));
+  });
+}
+
+/** Device-local cache used on mobile so large generated data never enters iCloud. */
+export class IndexedDbIndexCacheRepository implements IndexCacheRepository {
+  readonly snapshotPolicy = MOBILE_INDEX_CACHE_SNAPSHOT_POLICY;
+
+  constructor(
+    private readonly factory: IDBFactory,
+    private readonly cacheKey: string
+  ) {}
+
+  async load(): Promise<IndexCacheSnapshot | null> {
+    let database: IDBDatabase | null = null;
+    try {
+      database = await this.openDatabase();
+      const transaction = database.transaction(INDEXED_DB_STORE, "readonly");
+      const completion = transactionComplete(transaction);
+      const value = await requestResult(
+        transaction.objectStore(INDEXED_DB_STORE).get(this.cacheKey) as IDBRequest<unknown>
+      );
+      await completion;
+      if (!isIndexCacheSnapshot(value, this.snapshotPolicy)) {
+        if (value !== undefined) {
+          console.warn("Wiki Copilot: 手机本地索引缓存无效，将重新构建。");
+        }
+        return null;
+      }
+      return value;
+    } catch (error) {
+      console.warn("Wiki Copilot: 无法读取手机本地索引缓存，将重新构建。", error);
+      return null;
+    } finally {
+      database?.close();
+    }
+  }
+
+  async save(snapshot: IndexCacheSnapshot): Promise<void> {
+    const database = await this.openDatabase();
+    try {
+      const transaction = database.transaction(INDEXED_DB_STORE, "readwrite");
+      const completion = transactionComplete(transaction);
+      transaction.objectStore(INDEXED_DB_STORE).put(snapshot, this.cacheKey);
+      await completion;
+    } finally {
+      database.close();
+    }
+  }
+
+  private openDatabase(): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+      const request = this.factory.open(INDEXED_DB_NAME, INDEXED_DB_VERSION);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(INDEXED_DB_STORE)) {
+          request.result.createObjectStore(INDEXED_DB_STORE);
+        } else {
+          // v1 mobile snapshots contain the former high-cardinality chunk layout. Clearing the
+          // store inside the upgrade transaction avoids cloning that large value into JS memory
+          // before it can be rejected, which could terminate iOS during plugin startup.
+          request.transaction?.objectStore(INDEXED_DB_STORE).clear();
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error("无法打开 IndexedDB"));
+      request.onblocked = () => reject(new Error("IndexedDB 升级被阻止"));
+    });
   }
 }

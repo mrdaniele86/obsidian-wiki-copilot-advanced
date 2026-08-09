@@ -15,14 +15,21 @@ import {
   extractQueryGuidance,
   isExcludedPath
 } from "../core/profile";
+import {
+  hasBreadthIntent,
+  lexicalRescueTokens,
+  lexicalSubstringScore
+} from "../core/retrieval-query";
 import { WikiSearchIndex } from "../core/search-index";
 import { SourceCatalogIndex } from "../core/source-catalog";
 import type { SourceCatalogDocument } from "../core/source-catalog";
+import { technicalIdentifierTokens } from "../core/tokenizer";
 import type { KnowledgeProfile, KnowledgeRole, NoteMetadata } from "../core/types";
 import type { WikiCopilotSettings } from "../settings";
 import {
   createFileManifest,
   diffFileManifests,
+  FULL_INDEX_CACHE_SNAPSHOT_POLICY,
   INDEX_CACHE_VERSION,
   indexSettingsKey
 } from "./index-cache";
@@ -41,6 +48,34 @@ export interface IndexStatus {
 
 type StatusListener = (status: IndexStatus) => void;
 type IndexOutcome = "primary" | "catalog" | "skipped";
+type LexicalRepairCandidate = {
+  file: TFile;
+  role: KnowledgeRole;
+  score: number;
+  markdown?: string;
+};
+
+export interface IndexCoordinatorOptions {
+  lowMemory?: boolean;
+}
+
+export interface IndexDiagnostics {
+  status: IndexStatus;
+  cacheScope: "device" | "vault" | "none";
+  visibleMarkdownFiles: number;
+  trackedMarkdownFiles: number;
+  wikiFiles: number;
+  wikiChunks: number;
+  sourceFiles: number;
+  pendingUpdates: number;
+  profileRefreshPending: boolean;
+  activePath?: {
+    path: string;
+    role: KnowledgeRole;
+    indexed: boolean;
+    chunks: number;
+  };
+}
 
 const PRIMARY_ROLE_ORDER: Readonly<Record<KnowledgeRole, number>> = {
   index: 0,
@@ -61,7 +96,31 @@ function aliasesFromFrontmatter(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function basenameFromPath(path: string): string {
+  const name = path.split("/").at(-1) ?? path;
+  return name.replace(/\.md$/iu, "");
+}
+
+function headingsFromMarkdown(markdown: string): string[] {
+  const headings: string[] = [];
+  for (const line of markdown.split(/\r?\n/u)) {
+    const match = /^(?:#{1,6})\s+(.+)$/u.exec(line.trim());
+    if (match?.[1]) {
+      headings.push(match[1].trim());
+    }
+  }
+  return headings;
+}
+
 const SOURCE_HEADING_INDEX_CHARACTERS = 6_000;
+const MOBILE_MANIFEST_SHRINK_RATIO = 0.8;
+const MOBILE_MANIFEST_SHRINK_MIN_FILES = 100;
+const MOBILE_MANIFEST_SHRINK_MIN_REMOVALS = 50;
+const LEXICAL_RESCUE_MAX_MATCHES = 24;
+const LEXICAL_RESCUE_MAX_CONTENT_FILES = 500;
+const LEXICAL_RESCUE_MAX_CONTENT_BYTES = 8 * 1024 * 1024;
+const LEXICAL_RESCUE_RECHECK_MS = 60_000;
+const IDENTIFIER_RESCUE_RECHECK_MS = 60_000;
 
 function compactHeadings(headings: readonly string[]): string {
   const normalized = headings.map((heading) => heading.trim()).filter(Boolean);
@@ -118,15 +177,26 @@ export class IndexCoordinator {
   private activeBuildFileMtimes: Map<string, number> | null = null;
   private profileRefreshPending = false;
   private fileUpdateInProgress = false;
+  private readonly lowMemory: boolean;
+  private readonly verifiedAdapterIdentifiers = new Map<
+    string,
+    { checkedAt: number; visibleFiles: number }
+  >();
+  private readonly verifiedLexicalQueries = new Map<
+    string,
+    { checkedAt: number; visibleFiles: number }
+  >();
 
   constructor(
     private readonly vault: Vault,
     private readonly metadataCache: MetadataCache,
     private readonly getSettings: () => WikiCopilotSettings,
-    private readonly cacheRepository: IndexCacheRepository | null = null
+    private readonly cacheRepository: IndexCacheRepository | null = null,
+    options: IndexCoordinatorOptions = {}
   ) {
-    this.searchIndex = new WikiSearchIndex();
-    this.sourceCatalog = new SourceCatalogIndex();
+    this.lowMemory = options.lowMemory === true;
+    this.searchIndex = new WikiSearchIndex({ compactDocuments: this.lowMemory });
+    this.sourceCatalog = new SourceCatalogIndex({ useWorker: !this.lowMemory });
     this.evidenceReferences = new EvidenceReferenceMap();
     this.linkGraph = new LinkGraph();
     this.retriever = new HybridWikiRetriever(
@@ -148,12 +218,285 @@ export class IndexCoordinator {
     return this.status;
   }
 
+  getDiagnostics(activePath?: string): IndexDiagnostics {
+    const stats = this.searchIndex.stats;
+    let activePathStatus: IndexDiagnostics["activePath"];
+    if (activePath && this.profile) {
+      const role = classifyKnowledgePath(activePath, this.profile);
+      const chunks = this.searchIndex.getChunksForPath(activePath).length;
+      activePathStatus = {
+        path: activePath,
+        role,
+        indexed: chunks > 0 || this.sourceCatalog.hasPath(activePath),
+        chunks
+      };
+    }
+    return {
+      status: { ...this.status },
+      cacheScope: !this.cacheRepository ? "none" : this.lowMemory ? "device" : "vault",
+      visibleMarkdownFiles: this.vault.getMarkdownFiles().length,
+      trackedMarkdownFiles: this.indexedFileMtimes.size,
+      wikiFiles: stats.files,
+      wikiChunks: stats.documents,
+      sourceFiles: this.sourceCatalog.size,
+      pendingUpdates: this.pendingFiles.size,
+      profileRefreshPending: this.profileRefreshPending,
+      activePath: activePathStatus
+    };
+  }
+
+  /**
+   * Mobile-only index-free rescue path inspired by mature Obsidian search plugins:
+   * first inspect cheap path/metadata matches, then scan only missing Wiki pages within
+   * a strict byte budget. Matching notes are fed back into the normal index, so citation
+   * and Wiki/source role rules remain unchanged.
+   */
+  async repairLexicalCoverage(query: string): Promise<number> {
+    const profile = this.profile;
+    const terms = lexicalRescueTokens(query);
+    if (!this.lowMemory || !profile || terms.length === 0 || this.status.state !== "ready") {
+      return 0;
+    }
+
+    const visibleFiles = this.vault.getMarkdownFiles();
+    const queryKey = [...terms].sort().join("\u001f");
+    const previousCheck = this.verifiedLexicalQueries.get(queryKey);
+    if (previousCheck &&
+      previousCheck.visibleFiles === visibleFiles.length &&
+      Date.now() - previousCheck.checkedAt < LEXICAL_RESCUE_RECHECK_MS) {
+      return 0;
+    }
+
+    const settings = this.getSettings();
+    const metadataMatches = new Map<string, LexicalRepairCandidate>();
+    const contentCandidates: LexicalRepairCandidate[] = [];
+    const classificationScheduler = new CooperativeScheduler(8, 64);
+
+    for (const file of visibleFiles) {
+      const role = classifyKnowledgePath(file.path, profile);
+      if (!this.roleParticipatesInIndex(role, settings)) {
+        continue;
+      }
+      const score = lexicalSubstringScore(this.fileMetadataSearchText(file), terms);
+      const isPrimary = this.isPrimaryRole(role, settings);
+      const alreadyIndexed = isPrimary
+        ? this.searchIndex.hasPath(file.path)
+        : this.sourceCatalog.hasPath(file.path);
+      if (score > 0 && (!alreadyIndexed || role === "stable-source" || role === "pending-source")) {
+        metadataMatches.set(file.path, { file, role, score });
+      } else if (isPrimary && !alreadyIndexed) {
+        contentCandidates.push({ file, role, score: 0 });
+      }
+      await classificationScheduler.checkpoint();
+    }
+
+    contentCandidates.sort((left, right) =>
+      PRIMARY_ROLE_ORDER[left.role] - PRIMARY_ROLE_ORDER[right.role] ||
+      left.file.stat.size - right.file.stat.size ||
+      left.file.path.localeCompare(right.file.path));
+    const contentMatches: LexicalRepairCandidate[] = [];
+    const contentScheduler = new CooperativeScheduler(8, 8);
+    let scannedFiles = 0;
+    let scannedBytes = 0;
+    for (const candidate of contentCandidates) {
+      if (
+        scannedFiles >= LEXICAL_RESCUE_MAX_CONTENT_FILES ||
+        scannedBytes + candidate.file.stat.size > LEXICAL_RESCUE_MAX_CONTENT_BYTES
+      ) {
+        break;
+      }
+      scannedFiles += 1;
+      scannedBytes += candidate.file.stat.size;
+      try {
+        const markdown = await this.vault.cachedRead(candidate.file);
+        const score = lexicalSubstringScore(markdown, terms);
+        if (score > 0) {
+          contentMatches.push({ ...candidate, score, markdown });
+        }
+      } catch (error) {
+        console.warn(`Wiki Copilot: 无法直接检查本机知识页 ${candidate.file.path}`, error);
+      }
+      await contentScheduler.checkpoint();
+    }
+
+    const candidates = [...metadataMatches.values(), ...contentMatches]
+      .sort((left, right) =>
+        right.score - left.score ||
+        PRIMARY_ROLE_ORDER[left.role] - PRIMARY_ROLE_ORDER[right.role] ||
+        left.file.path.localeCompare(right.file.path))
+      .slice(0, LEXICAL_RESCUE_MAX_MATCHES);
+    const repairedPaths = new Set<string>();
+    let repaired = 0;
+    for (const candidate of candidates) {
+      try {
+        const outcome = await this.updateFile(
+          candidate.file,
+          profile,
+          settings,
+          candidate.markdown
+        );
+        if (outcome !== "skipped") {
+          this.indexedFileMtimes.set(candidate.file.path, candidate.file.stat.mtime);
+          repairedPaths.add(candidate.file.path);
+          repaired += 1;
+        }
+      } catch (error) {
+        console.warn(`Wiki Copilot: 无法按查询补齐索引 ${candidate.file.path}`, error);
+      }
+      await yieldToUi();
+    }
+
+    const remaining = Math.max(0, LEXICAL_RESCUE_MAX_MATCHES - repairedPaths.size);
+    if (remaining > 0 && (repairedPaths.size === 0 || hasBreadthIntent(query))) {
+      const adapterPaths = await this.discoverAdapterLexicalPaths(
+        terms,
+        profile,
+        settings,
+        remaining
+      );
+      for (const path of adapterPaths) {
+        if (repairedPaths.has(path) || this.isIndexedPath(path)) {
+          continue;
+        }
+        const role = classifyKnowledgePath(path, profile);
+        if (!this.roleParticipatesInIndex(role, settings)) {
+          continue;
+        }
+        try {
+          const markdown = await this.vault.adapter.read(path);
+          await this.updateAdapterMarkdown(path, markdown, role, profile, settings);
+          repairedPaths.add(path);
+          repaired += 1;
+        } catch (error) {
+          console.warn(`Wiki Copilot: 无法直接读取本机知识页 ${path}`, error);
+        }
+        await yieldToUi();
+      }
+    }
+
+    this.verifiedLexicalQueries.set(queryKey, {
+      checkedAt: Date.now(),
+      visibleFiles: visibleFiles.length
+    });
+    if (repaired > 0) {
+      const stats = this.searchIndex.stats;
+      this.emit({
+        ...this.status,
+        indexedFiles: stats.files + this.sourceCatalog.size,
+        chunks: stats.documents,
+        message: this.readyMessage()
+      });
+      this.scheduleCacheWrite(0);
+    }
+    return repaired;
+  }
+
   async ensureReady(): Promise<void> {
     if (this.status.state === "ready") {
       return;
     }
     await this.initialize();
     await this.waitUntilReady();
+  }
+
+  /**
+   * Repairs a device-local cache that was created while only a subset of the vault was visible.
+   * This is intentionally narrow: only filenames containing the requested exact identifier are
+   * reclassified and refreshed before the query is retried.
+   */
+  async repairTechnicalIdentifierCoverage(query: string): Promise<number> {
+    const profile = this.profile;
+    const identifiers = new Set(technicalIdentifierTokens(query));
+    if (!profile || identifiers.size === 0 || this.status.state !== "ready") {
+      return 0;
+    }
+
+    const settings = this.getSettings();
+    const visibleFiles = this.vault.getMarkdownFiles();
+    if ([...identifiers].every((identifier) => this.sourceCatalog.hasIdentifier(identifier))) {
+      return 0;
+    }
+    const checkedAt = Date.now();
+    const needsAdapterVerification = this.lowMemory && [...identifiers].some((identifier) => {
+      if (this.sourceCatalog.hasIdentifier(identifier)) {
+        return false;
+      }
+      const previous = this.verifiedAdapterIdentifiers.get(identifier);
+      return !previous ||
+        previous.visibleFiles !== visibleFiles.length ||
+        checkedAt - previous.checkedAt >= IDENTIFIER_RESCUE_RECHECK_MS;
+    });
+    if (this.lowMemory && !needsAdapterVerification) {
+      return 0;
+    }
+    const candidates = visibleFiles.filter((file) => {
+      const pathIdentifiers = technicalIdentifierTokens(file.path);
+      if (!pathIdentifiers.some((identifier) => identifiers.has(identifier))) {
+        return false;
+      }
+      const role = classifyKnowledgePath(file.path, profile);
+      return role === "stable-source" ||
+        (role === "pending-source" && settings.retrieval.includePending) ||
+        role === "index" || role === "topic" || role === "concept" ||
+        role === "summary" || role === "wiki" ||
+        (role === "other" && settings.retrieval.includeOtherNotes);
+    });
+
+    let repaired = 0;
+    const repairedPaths = new Set<string>();
+    for (const file of candidates) {
+      try {
+        const outcome = await this.updateFile(file, profile, settings);
+        if (outcome !== "skipped") {
+          this.indexedFileMtimes.set(file.path, file.stat.mtime);
+          repairedPaths.add(file.path);
+          repaired += 1;
+        }
+      } catch (error) {
+        console.warn(`Wiki Copilot: 无法补齐本机标识符索引 ${file.path}`, error);
+      }
+      await yieldToUi();
+    }
+
+    if (needsAdapterVerification) {
+      const adapterPaths = await this.discoverAdapterIdentifierPaths(identifiers, profile, settings);
+      for (const path of adapterPaths) {
+        if (repairedPaths.has(path)) {
+          continue;
+        }
+        const role = classifyKnowledgePath(path, profile);
+        if (role !== "stable-source" && role !== "pending-source") {
+          continue;
+        }
+        try {
+          const markdown = await this.vault.adapter.read(path);
+          const headings = headingsFromMarkdown(markdown);
+          await this.sourceCatalog.replaceAsync({
+            path,
+            title: headings[0] ?? basenameFromPath(path),
+            aliases: "",
+            tags: "",
+            headings: compactHeadings(headings),
+            role
+          });
+          repairedPaths.add(path);
+          repaired += 1;
+        } catch (error) {
+          console.warn(`Wiki Copilot: 无法从设备文件系统补齐标识符索引 ${path}`, error);
+        }
+        await yieldToUi();
+      }
+      for (const identifier of identifiers) {
+        this.verifiedAdapterIdentifiers.set(identifier, {
+          checkedAt,
+          visibleFiles: visibleFiles.length
+        });
+      }
+    }
+    if (repaired > 0) {
+      this.scheduleCacheWrite(0);
+    }
+    return repaired;
   }
 
   initialize(): Promise<void> {
@@ -205,6 +548,10 @@ export class IndexCoordinator {
   }
 
   scheduleFileUpdate(file: TFile | null, oldPath?: string): void {
+    if (file || oldPath) {
+      this.verifiedAdapterIdentifiers.clear();
+      this.verifiedLexicalQueries.clear();
+    }
     if (file && !oldPath) {
       const coveredMtime = this.activeBuildFileMtimes
         ? this.activeBuildFileMtimes.get(file.path)
@@ -230,12 +577,15 @@ export class IndexCoordinator {
       return;
     }
     const graphGeneration = ++this.graphGeneration;
-    void this.linkGraph.rebuildAsync(
+    void this.linkGraph.synchronizeAsync(
       this.metadataCache.resolvedLinks,
       () => graphGeneration === this.graphGeneration
-    ).then((applied) => {
+    ).then(({ applied, changed }) => {
       if (applied && this.status.state === "ready") {
         this.emit({ ...this.status, message: this.readyMessage() });
+        if (changed) {
+          this.scheduleCacheWrite(250);
+        }
       }
     }).catch((error) => {
       console.warn("Wiki Copilot: Wikilink 图谱更新失败。", error);
@@ -256,6 +606,8 @@ export class IndexCoordinator {
     this.sourceCatalog.destroy();
     this.activeBuildFileMtimes = null;
     this.indexedFileMtimes.clear();
+    this.verifiedAdapterIdentifiers.clear();
+    this.verifiedLexicalQueries.clear();
     this.listeners.clear();
   }
 
@@ -292,9 +644,19 @@ export class IndexCoordinator {
     }
 
     const manifestDiff = diffFileManifests(snapshot.files, currentManifest);
+    const manifestAppearsIncomplete = this.lowMemory &&
+      snapshot.files.length >= MOBILE_MANIFEST_SHRINK_MIN_FILES &&
+      currentManifest.length < snapshot.files.length * MOBILE_MANIFEST_SHRINK_RATIO &&
+      manifestDiff.removedPaths.length >= MOBILE_MANIFEST_SHRINK_MIN_REMOVALS;
+    const removedPaths = manifestAppearsIncomplete ? [] : manifestDiff.removedPaths;
+    if (manifestAppearsIncomplete) {
+      console.warn(
+        "Wiki Copilot: 当前设备仅看到部分知识库文件；保留缓存内容，等待文件同步完成。"
+      );
+    }
     const requiresRebuild = manifestDiff.changedPaths.some((path) =>
       requiresFullProfileRebuild(path, snapshot.profile, "change")
-    ) || manifestDiff.removedPaths.some((path) =>
+    ) || removedPaths.some((path) =>
       requiresFullProfileRebuild(path, snapshot.profile, "remove")
     );
     if (requiresRebuild) {
@@ -302,21 +664,31 @@ export class IndexCoordinator {
       return;
     }
 
+    let linkGraphRestored = false;
     try {
       this.profile = snapshot.profile;
       this.queryGuidance = snapshot.queryGuidance;
       this.emit({ ...this.status, message: "正在恢复 Wiki 索引…" });
       await this.searchIndex.restoreSnapshot(snapshot.searchIndex);
+      snapshot.searchIndex.index = null;
+      snapshot.searchIndex.documents.length = 0;
       if (generation !== this.generation) {
         return;
       }
 
       this.emit({ ...this.status, message: "正在恢复原文目录…" });
       await this.sourceCatalog.restoreSnapshot(snapshot.sourceCatalog);
+      snapshot.sourceCatalog.length = 0;
       if (generation !== this.generation) {
         return;
       }
       this.evidenceReferences.restoreSnapshot(snapshot.evidenceReferences);
+      snapshot.evidenceReferences.length = 0;
+      if (snapshot.linkGraph) {
+        this.linkGraph.restoreSnapshot(snapshot.linkGraph);
+        snapshot.linkGraph.length = 0;
+        linkGraphRestored = true;
+      }
       this.retriever.clearEvidenceCache();
     } catch (error) {
       console.warn("Wiki Copilot: 恢复本地索引缓存失败，将重新构建。", error);
@@ -327,7 +699,7 @@ export class IndexCoordinator {
     }
 
     this.indexedFileMtimes = new Map(snapshot.files.map((file) => [file.path, file.mtime]));
-    for (const path of manifestDiff.removedPaths) {
+    for (const path of removedPaths) {
       this.removePath(path);
     }
 
@@ -342,8 +714,8 @@ export class IndexCoordinator {
         const rightSource = rightRole === "stable-source" || rightRole === "pending-source";
         return Number(rightSource) - Number(leftSource) || left.path.localeCompare(right.path);
       });
-    const updateCount = manifestDiff.removedPaths.length + changedFiles.length;
-    let updated = manifestDiff.removedPaths.length;
+    const updateCount = removedPaths.length + changedFiles.length;
+    let updated = removedPaths.length;
     if (updateCount > 0) {
       this.emit({
         ...this.status,
@@ -364,15 +736,33 @@ export class IndexCoordinator {
       await yieldToUi();
     }
 
-    this.emit({ ...this.status, message: "正在恢复知识关联…" });
-    const graphBuilt = await this.linkGraph.rebuildAsync(
-      this.metadataCache.resolvedLinks,
-      () => generation === this.generation
-    );
-    if (!graphBuilt || generation !== this.generation) {
-      return;
+    if (linkGraphRestored) {
+      if (updateCount > 0 && !manifestAppearsIncomplete) {
+        this.emit({ ...this.status, message: "正在同步知识关联…" });
+        const graphSync = await this.linkGraph.synchronizeAsync(
+          this.metadataCache.resolvedLinks,
+          () => generation === this.generation
+        );
+        if (!graphSync.applied || generation !== this.generation) {
+          return;
+        }
+      }
+    } else {
+      this.emit({ ...this.status, message: "正在升级知识关联缓存…" });
+      const graphBuilt = await this.linkGraph.rebuildAsync(
+        this.metadataCache.resolvedLinks,
+        () => generation === this.generation
+      );
+      if (!graphBuilt || generation !== this.generation) {
+        return;
+      }
     }
-    this.indexedFileMtimes = currentFileMtimes;
+    this.indexedFileMtimes = manifestAppearsIncomplete
+      ? new Map([
+        ...snapshot.files.map((file) => [file.path, file.mtime] as const),
+        ...currentFileMtimes
+      ])
+      : currentFileMtimes;
     const stats = this.searchIndex.stats;
     const totalFiles = stats.files + this.sourceCatalog.size;
     this.emit({
@@ -383,7 +773,9 @@ export class IndexCoordinator {
       chunks: stats.documents,
       message: this.readyMessage()
     });
-    if (updateCount > 0) {
+    const snapshotPolicy = cacheRepository.snapshotPolicy ?? FULL_INDEX_CACHE_SNAPSHOT_POLICY;
+    if (!manifestAppearsIncomplete &&
+      (updateCount > 0 || (!linkGraphRestored && snapshotPolicy.includeLinkGraph))) {
       this.scheduleCacheWrite(0);
     }
     if (this.pendingFiles.size > 0) {
@@ -589,6 +981,37 @@ export class IndexCoordinator {
     };
   }
 
+  private isPrimaryRole(role: KnowledgeRole, settings: WikiCopilotSettings): boolean {
+    return role === "index" || role === "topic" || role === "concept" ||
+      role === "summary" || role === "wiki" ||
+      (role === "other" && settings.retrieval.includeOtherNotes);
+  }
+
+  private roleParticipatesInIndex(
+    role: KnowledgeRole,
+    settings: WikiCopilotSettings
+  ): boolean {
+    return this.isPrimaryRole(role, settings) || role === "stable-source" ||
+      (role === "pending-source" && settings.retrieval.includePending);
+  }
+
+  private isIndexedPath(path: string): boolean {
+    return this.searchIndex.hasPath(path) || this.sourceCatalog.hasPath(path);
+  }
+
+  private fileMetadataSearchText(file: TFile): string {
+    const cache = this.metadataCache.getFileCache(file);
+    const aliases = aliasesFromFrontmatter(cache?.frontmatter?.aliases ?? cache?.frontmatter?.alias);
+    const tags = cache ? getAllTags(cache)?.map((tag) => tag.replace(/^#/u, "")) ?? [] : [];
+    return [
+      file.path,
+      file.basename,
+      ...aliases,
+      ...tags,
+      ...(cache?.headings?.map((heading) => heading.heading) ?? [])
+    ].join(" ");
+  }
+
   private catalogDocument(
     file: TFile,
     role: KnowledgeRole
@@ -613,9 +1036,10 @@ export class IndexCoordinator {
     file: TFile,
     role: KnowledgeRole,
     profile: KnowledgeProfile,
-    settings: WikiCopilotSettings
+    settings: WikiCopilotSettings,
+    knownMarkdown?: string
   ): Promise<void> {
-    const content = await this.vault.cachedRead(file);
+    const content = knownMarkdown ?? await this.vault.cachedRead(file);
     await this.searchIndex.replaceNoteAsync(this.noteMetadata(file, role), content);
     const sourceRoots = [
       ...profile.stableSourceRoots,
@@ -632,7 +1056,8 @@ export class IndexCoordinator {
   private async updateFile(
     file: TFile,
     profile: KnowledgeProfile,
-    settings: WikiCopilotSettings
+    settings: WikiCopilotSettings,
+    knownMarkdown?: string
   ): Promise<IndexOutcome> {
     this.removePath(file.path);
     if (isExcludedPath(file.path, profile)) {
@@ -646,15 +1071,8 @@ export class IndexCoordinator {
       }
       return "catalog";
     }
-    if (
-      role === "index" ||
-      role === "topic" ||
-      role === "concept" ||
-      role === "summary" ||
-      role === "wiki" ||
-      (role === "other" && settings.retrieval.includeOtherNotes)
-    ) {
-      await this.indexPrimaryFile(file, role, profile, settings);
+    if (this.isPrimaryRole(role, settings)) {
+      await this.indexPrimaryFile(file, role, profile, settings, knownMarkdown);
       return "primary";
     }
     return "skipped";
@@ -677,20 +1095,172 @@ export class IndexCoordinator {
     const notes: EvidenceNote[] = [];
     for (const path of paths) {
       const abstractFile = this.vault.getAbstractFileByPath(path);
-      if (!(abstractFile instanceof TFile) || abstractFile.extension.toLocaleLowerCase() !== "md") {
-        continue;
-      }
       const role = classifyKnowledgePath(path, profile);
       if (role !== "stable-source" && !(includePending && role === "pending-source")) {
         continue;
       }
-      notes.push({
-        metadata: this.noteMetadata(abstractFile, role),
-        markdown: await this.vault.cachedRead(abstractFile)
-      });
+      if (abstractFile instanceof TFile && abstractFile.extension.toLocaleLowerCase() === "md") {
+        notes.push({
+          metadata: this.noteMetadata(abstractFile, role),
+          markdown: await this.vault.cachedRead(abstractFile)
+        });
+      } else {
+        try {
+          notes.push({
+            metadata: {
+              path,
+              basename: basenameFromPath(path),
+              aliases: [],
+              tags: [],
+              role
+            },
+            markdown: await this.vault.adapter.read(path)
+          });
+        } catch (error) {
+          console.warn(`Wiki Copilot: 无法读取设备原文 ${path}`, error);
+        }
+      }
       await yieldToUi();
     }
     return notes;
+  }
+
+  private async updateAdapterMarkdown(
+    path: string,
+    markdown: string,
+    role: KnowledgeRole,
+    profile: KnowledgeProfile,
+    settings: WikiCopilotSettings
+  ): Promise<void> {
+    this.removePath(path);
+    const headings = headingsFromMarkdown(markdown);
+    if (role === "stable-source" || role === "pending-source") {
+      await this.sourceCatalog.replaceAsync({
+        path,
+        title: headings[0] ?? basenameFromPath(path),
+        aliases: "",
+        tags: "",
+        headings: compactHeadings(headings),
+        role
+      });
+      return;
+    }
+    if (!this.isPrimaryRole(role, settings)) {
+      return;
+    }
+    await this.searchIndex.replaceNoteAsync({
+      path,
+      basename: basenameFromPath(path),
+      aliases: [],
+      tags: [],
+      role
+    }, markdown);
+    const sourceRoots = [
+      ...profile.stableSourceRoots,
+      ...(settings.retrieval.includePending ? profile.pendingSourceRoots : [])
+    ];
+    this.evidenceReferences.replace(
+      path,
+      markdown,
+      sourceRoots,
+      (candidatePath) => this.sourceCatalog.hasPath(candidatePath)
+    );
+  }
+
+  private async discoverAdapterLexicalPaths(
+    terms: readonly string[],
+    profile: KnowledgeProfile,
+    settings: WikiCopilotSettings,
+    limit: number
+  ): Promise<string[]> {
+    if (limit <= 0) {
+      return [];
+    }
+    const roots = [
+      ...profile.wikiRoots,
+      ...profile.stableSourceRoots,
+      ...(settings.retrieval.includePending ? profile.pendingSourceRoots : [])
+    ];
+    const queue = [...new Set(roots)];
+    const visited = new Set<string>();
+    const matches: Array<{ path: string; score: number }> = [];
+    const scheduler = new CooperativeScheduler(8, 8);
+
+    while (queue.length > 0) {
+      const folder = queue.shift();
+      if (!folder || visited.has(folder)) {
+        continue;
+      }
+      visited.add(folder);
+      try {
+        const listed = await this.vault.adapter.list(folder);
+        for (const path of listed.files) {
+          if (!path.toLocaleLowerCase().endsWith(".md")) {
+            continue;
+          }
+          const role = classifyKnowledgePath(path, profile);
+          if (!this.roleParticipatesInIndex(role, settings)) {
+            continue;
+          }
+          const score = lexicalSubstringScore(path, terms);
+          if (score > 0) {
+            matches.push({ path, score });
+          }
+        }
+        queue.push(...listed.folders);
+      } catch (error) {
+        console.warn(`Wiki Copilot: 无法枚举设备知识目录 ${folder}`, error);
+      }
+      await scheduler.checkpoint();
+    }
+
+    return matches
+      .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
+      .slice(0, limit)
+      .map((match) => match.path);
+  }
+
+  private async discoverAdapterIdentifierPaths(
+    identifiers: ReadonlySet<string>,
+    profile: KnowledgeProfile,
+    settings: WikiCopilotSettings
+  ): Promise<string[]> {
+    const roots = [
+      ...profile.stableSourceRoots,
+      ...(settings.retrieval.includePending ? profile.pendingSourceRoots : [])
+    ];
+    const queue = [...new Set(roots)];
+    const visited = new Set<string>();
+    const matches: string[] = [];
+    const scheduler = new CooperativeScheduler(8, 8);
+
+    while (queue.length > 0 && matches.length < 64) {
+      const folder = queue.shift();
+      if (!folder || visited.has(folder)) {
+        continue;
+      }
+      visited.add(folder);
+      try {
+        const listed = await this.vault.adapter.list(folder);
+        for (const path of listed.files) {
+          if (!path.toLocaleLowerCase().endsWith(".md")) {
+            continue;
+          }
+          const pathIdentifiers = technicalIdentifierTokens(path);
+          if (pathIdentifiers.some((identifier) => identifiers.has(identifier))) {
+            matches.push(path);
+            if (matches.length >= 64) {
+              break;
+            }
+          }
+        }
+        queue.push(...listed.folders);
+      } catch (error) {
+        console.warn(`Wiki Copilot: 无法枚举设备知识目录 ${folder}`, error);
+      }
+      await scheduler.checkpoint();
+    }
+    return matches;
   }
 
   private async flushFileUpdates(): Promise<void> {
@@ -729,6 +1299,11 @@ export class IndexCoordinator {
         await this.updateFile(file, this.profile, settings);
         this.indexedFileMtimes.set(file.path, file.stat.mtime);
       }
+      const graphGeneration = ++this.graphGeneration;
+      await this.linkGraph.synchronizeAsync(
+        this.metadataCache.resolvedLinks,
+        () => graphGeneration === this.graphGeneration
+      );
       const stats = this.searchIndex.stats;
       this.emit({
         ...this.status,
@@ -788,17 +1363,24 @@ export class IndexCoordinator {
     ) {
       return null;
     }
-    return {
+    const snapshotPolicy = this.cacheRepository?.snapshotPolicy ?? FULL_INDEX_CACHE_SNAPSHOT_POLICY;
+    const snapshot: IndexCacheSnapshot = {
       version: INDEX_CACHE_VERSION,
       createdAt: Date.now(),
       settingsKey: indexSettingsKey(this.getSettings()),
       profile,
       queryGuidance: this.queryGuidance,
       files: createFileManifest(this.vault.getMarkdownFiles()),
-      searchIndex: this.searchIndex.createSnapshot(),
+      searchIndex: this.searchIndex.createSnapshot({
+        includeSerializedIndex: snapshotPolicy.includeSerializedSearchIndex
+      }),
       sourceCatalog: this.sourceCatalog.createSnapshot(),
       evidenceReferences: this.evidenceReferences.createSnapshot()
     };
+    if (snapshotPolicy.includeLinkGraph) {
+      snapshot.linkGraph = this.linkGraph.createSnapshot();
+    }
+    return snapshot;
   }
 
   private waitUntilReady(): Promise<void> {

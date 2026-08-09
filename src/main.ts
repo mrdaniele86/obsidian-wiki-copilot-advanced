@@ -1,18 +1,44 @@
-import { normalizePath, Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import { normalizePath, Notice, Platform, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import { AnswerTimeoutError, answerTimeoutMessage } from "./core/answer-error";
 import { validateAnswerCitations } from "./core/citations";
 import { buildAnswerContext } from "./core/context-builder";
-import type { AnswerResult, RetrievalResult } from "./core/types";
+import type {
+  AnswerResult,
+  AnswerRetrievalMetrics,
+  RetrievalResult,
+  SourceReference
+} from "./core/types";
+import {
+  discardUnanchoredTechnicalResult,
+  exactIdentifierMissingMessage,
+  hasTechnicalIdentifierAnchor,
+  retrievalQueryForQuestion
+} from "./core/retrieval-query";
+import { technicalIdentifierTokens } from "./core/tokenizer";
 import { OpenAICompatibleClient } from "./llm/openai-compatible";
-import type { ChatTurn } from "./llm/openai-compatible";
-import { modelTimeoutMsForRange, RequestTimeoutError } from "./llm/request-timeout";
+import type {
+  ActiveCompletionMode,
+  ChatTurn,
+  CompletionActivity,
+  ModelResponseMode
+} from "./llm/openai-compatible";
+import {
+  modelTimeoutMsForRange,
+  RequestCancelledError,
+  RequestTimeoutError,
+  withAbortSignal
+} from "./llm/request-timeout";
 import {
   FIXED_API_KEY_ID,
   providerLabel,
   providerRequiresApiKey
 } from "./model-presets";
 import { IndexCoordinator } from "./obsidian/index-coordinator";
-import { AdapterIndexCacheRepository } from "./obsidian/index-cache";
+import {
+  AdapterIndexCacheRepository,
+  IndexedDbIndexCacheRepository
+} from "./obsidian/index-cache";
+import type { IndexCacheRepository } from "./obsidian/index-cache";
 import {
   DEFAULT_SETTINGS,
   legacyApiKeySecretName,
@@ -20,10 +46,23 @@ import {
   WikiCopilotSettingTab
 } from "./settings";
 import type { WikiCopilotSettings } from "./settings";
+import { citationOpenState } from "./ui/citation-open-state";
+import { ReusableLeafController } from "./ui/temporary-leaf-controller";
+import { planMobileRootView } from "./ui/view-leaf-placement";
 import { WikiCopilotView, WIKI_COPILOT_VIEW_TYPE } from "./ui/wiki-copilot-view";
 
-function isFollowUpQuestion(question: string): boolean {
-  return question.length <= 36 || /(?:这个|这些|它|它们|上述|前面|继续|那|其|this|that|those|it|they|continue)/iu.test(question);
+export interface AnswerOptions {
+  signal?: AbortSignal;
+  responseMode?: ModelResponseMode;
+  onProgress?: (message: string) => void;
+  onDelta?: (delta: string) => void;
+  onRetrieved?: (
+    sources: SourceReference[],
+    knowledgeBaseHit: boolean,
+    metrics: AnswerRetrievalMetrics
+  ) => void;
+  onResponseMode?: (mode: ActiveCompletionMode, detail?: string) => void;
+  onModelActivity?: (activity: CompletionActivity) => void;
 }
 
 export default class WikiCopilotPlugin extends Plugin {
@@ -32,22 +71,35 @@ export default class WikiCopilotPlugin extends Plugin {
 
   private llmClient!: OpenAICompatibleClient;
   private manualRebuildPromise: Promise<void> | null = null;
+  private readonly citationPreview = new ReusableLeafController<WorkspaceLeaf>();
+  private citationOpenQueue: Promise<void> = Promise.resolve();
 
   override async onload(): Promise<void> {
     const savedData: unknown = await this.loadData();
     this.settings = loadWikiCopilotSettings(savedData);
     await this.migrateLegacyApiKey(savedData);
-    const cacheRepository = this.manifest.dir
-      ? new AdapterIndexCacheRepository(
+    let cacheRepository: IndexCacheRepository | null = null;
+    if (Platform.isMobile) {
+      if (typeof window.indexedDB !== "undefined") {
+        cacheRepository = new IndexedDbIndexCacheRepository(
+          window.indexedDB,
+          `${this.manifest.id}:${this.app.vault.getName()}`
+        );
+      } else {
+        console.warn("Wiki Copilot: 当前移动端环境不支持设备本地索引缓存。");
+      }
+    } else if (this.manifest.dir) {
+      cacheRepository = new AdapterIndexCacheRepository(
         this.app.vault.adapter,
         normalizePath(`${this.manifest.dir}/index-cache.json`)
-      )
-      : null;
+      );
+    }
     this.indexCoordinator = new IndexCoordinator(
       this.app.vault,
       this.app.metadataCache,
       () => this.settings,
-      cacheRepository
+      cacheRepository,
+      { lowMemory: Platform.isMobile }
     );
     this.llmClient = new OpenAICompatibleClient(() => this.getApiKey());
 
@@ -73,12 +125,22 @@ export default class WikiCopilotPlugin extends Plugin {
       name: "显示识别到的知识库结构",
       callback: () => this.showProfileNotice()
     });
+    this.addCommand({
+      id: "show-index-diagnostics",
+      name: "显示知识索引诊断",
+      callback: () => this.showIndexDiagnostics()
+    });
 
     this.registerEvent(this.app.metadataCache.on("changed", (file) => {
       this.indexCoordinator.scheduleFileUpdate(file);
     }));
     this.registerEvent(this.app.metadataCache.on("resolved", () => {
       this.indexCoordinator.rebuildGraph();
+    }));
+    this.registerEvent(this.app.vault.on("create", (file) => {
+      if (file instanceof TFile && file.extension.toLocaleLowerCase() === "md") {
+        this.indexCoordinator.scheduleFileUpdate(file);
+      }
     }));
     this.registerEvent(this.app.vault.on("delete", (file) => {
       if (file instanceof TFile && file.extension.toLocaleLowerCase() === "md") {
@@ -92,17 +154,58 @@ export default class WikiCopilotPlugin extends Plugin {
     }));
 
     this.app.workspace.onLayoutReady(() => {
-      void this.indexCoordinator.initialize();
+      void this.indexCoordinator.initialize().catch((error) => {
+        console.error("Wiki Copilot: 初始化知识索引失败。", error);
+      });
+      if (
+        Platform.isMobile &&
+        this.app.workspace.getActiveViewOfType(WikiCopilotView) !== null
+      ) {
+        void this.activateView();
+      }
     });
   }
 
   override onunload(): void {
+    this.citationPreview.close();
     this.indexCoordinator.destroy();
+  }
+
+  openCitation(file: TFile, subpath?: string): Promise<void> {
+    const operation = this.citationOpenQueue.then(() => this.openCitationNow(file, subpath));
+    this.citationOpenQueue = operation.catch(() => undefined);
+    return operation;
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
     this.refreshOpenViews();
+  }
+
+  private async openCitationNow(file: TFile, subpath?: string): Promise<void> {
+    const { leaf, created } = this.citationPreview.acquire(
+      () => this.app.workspace.getLeaf("tab"),
+      (candidate) => this.isAttachedLeaf(candidate)
+    );
+
+    try {
+      await leaf.openFile(file, citationOpenState(subpath));
+    } catch (error) {
+      if (created) {
+        this.citationPreview.discard(leaf);
+      }
+      throw error;
+    }
+  }
+
+  private isAttachedLeaf(candidate: WorkspaceLeaf): boolean {
+    let attached = false;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (leaf === candidate) {
+        attached = true;
+      }
+    });
+    return attached;
   }
 
   isModelConfigured(): boolean {
@@ -143,39 +246,119 @@ export default class WikiCopilotPlugin extends Plugin {
   async retrieve(
     question: string,
     history: ChatTurn[] = [],
-    onProgress?: (message: string) => void
+    onProgress?: (message: string) => void,
+    signal?: AbortSignal
   ): Promise<RetrievalResult> {
+    const reportProgress = (message: string): void => {
+      if (!signal?.aborted) {
+        onProgress?.(message);
+      }
+    };
     if (this.indexCoordinator.currentStatus.state !== "ready") {
-      onProgress?.("正在准备本地知识索引…");
+      reportProgress("正在准备本地知识索引…");
     }
-    await this.indexCoordinator.ensureReady();
-    const previousQuestion = [...history].reverse().find((turn) => turn.role === "user")?.content;
-    const retrievalQuery = previousQuestion && isFollowUpQuestion(question)
-      ? `${previousQuestion}\n${question}`
-      : question;
+    await withAbortSignal(this.indexCoordinator.ensureReady(), signal);
+    const retrievalQuery = retrievalQueryForQuestion(question, history);
     const activePath = this.settings.prioritizeActiveNote
       ? this.app.workspace.getActiveFile()?.path
       : undefined;
 
-    return this.indexCoordinator.retriever.retrieve(retrievalQuery, {
-      ...this.settings.retrieval,
-      activePath
-    }, onProgress);
+    const hasExactIdentifiers = technicalIdentifierTokens(retrievalQuery).length > 0;
+    let identifierRepairAttempted = false;
+    if (Platform.isMobile && hasExactIdentifiers) {
+      reportProgress("正在校验本机精确标识符索引…");
+      await withAbortSignal(
+        this.indexCoordinator.repairTechnicalIdentifierCoverage(retrievalQuery),
+        signal
+      );
+      identifierRepairAttempted = true;
+    }
+
+    let result = await withAbortSignal(
+      this.indexCoordinator.retriever.retrieve(retrievalQuery, {
+        ...this.settings.retrieval,
+        activePath
+      }, reportProgress),
+      signal
+    );
+    if (!identifierRepairAttempted && !hasTechnicalIdentifierAnchor(retrievalQuery, result)) {
+      reportProgress("正在校验本机精确标识符索引…");
+      const repaired = await withAbortSignal(
+        this.indexCoordinator.repairTechnicalIdentifierCoverage(retrievalQuery),
+        signal
+      );
+      if (repaired > 0) {
+        reportProgress(`已补齐 ${repaired} 个标识符索引条目，正在重新检索…`);
+        result = await withAbortSignal(
+          this.indexCoordinator.retriever.retrieve(retrievalQuery, {
+            ...this.settings.retrieval,
+            activePath
+          }, reportProgress),
+          signal
+        );
+      }
+    }
+    let guardedResult = discardUnanchoredTechnicalResult(retrievalQuery, result);
+    if (Platform.isMobile && guardedResult.chunks.length === 0) {
+      reportProgress("正在直接检查本机知识文件…");
+      const repaired = await withAbortSignal(
+        this.indexCoordinator.repairLexicalCoverage(retrievalQuery),
+        signal
+      );
+      if (repaired > 0) {
+        reportProgress(`已补齐 ${repaired} 个查询相关索引条目，正在重新检索…`);
+        result = await withAbortSignal(
+          this.indexCoordinator.retriever.retrieve(retrievalQuery, {
+            ...this.settings.retrieval,
+            activePath
+          }, reportProgress),
+          signal
+        );
+        guardedResult = discardUnanchoredTechnicalResult(retrievalQuery, result);
+      }
+    }
+    return guardedResult;
   }
 
   async answer(
     question: string,
     history: ChatTurn[],
-    onProgress?: (message: string) => void
+    options: AnswerOptions = {}
   ): Promise<AnswerResult> {
-    const retrieval = await this.retrieve(question, history, onProgress);
+    if (options.signal?.aborted) {
+      throw new RequestCancelledError();
+    }
+    const retrieval = await this.retrieve(
+      question,
+      history,
+      options.onProgress,
+      options.signal
+    );
+    if (options.signal?.aborted) {
+      throw new RequestCancelledError();
+    }
     const knowledgeBaseHit = retrieval.chunks.length > 0;
     const context = buildAnswerContext(retrieval);
+    options.onRetrieved?.(context.sources, knowledgeBaseHit, {
+      contextCharacters: context.context.length,
+      sourceCount: context.sources.length
+    });
+    const missingExactIdentifier = knowledgeBaseHit
+      ? null
+      : exactIdentifierMissingMessage(retrieval.query);
+    if (missingExactIdentifier) {
+      options.onProgress?.("未找到精确标识符依据");
+      return {
+        markdown: missingExactIdentifier,
+        sources: [],
+        knowledgeBaseHit: false
+      };
+    }
     const modelServiceName = providerLabel(
       this.settings.model.provider,
       this.settings.model.serviceName
     );
-    onProgress?.(knowledgeBaseHit
+    options.onProgress?.(knowledgeBaseHit
       ? `已检索 ${retrieval.chunks.length} 个知识页面，${modelServiceName}思考中…`
       : `未命中当前知识库，${modelServiceName}思考中…`);
     const retrievalRange = this.settings.retrievalRange;
@@ -188,7 +371,21 @@ export default class WikiCopilotPlugin extends Plugin {
         history,
         this.indexCoordinator.queryGuidance,
         this.settings.model,
-        timeoutMilliseconds
+        timeoutMilliseconds,
+        {
+          signal: options.signal,
+          responseMode: options.responseMode,
+          onDelta: options.onDelta,
+          onActivity: options.onModelActivity,
+          onResponseMode: (mode, detail) => {
+            options.onResponseMode?.(mode, detail);
+            if (detail) {
+              options.onProgress?.(detail);
+            } else if (mode === "non-stream") {
+              options.onProgress?.(`${modelServiceName}思考中（兼容模式）…`);
+            }
+          }
+        }
       );
     } catch (error) {
       if (error instanceof RequestTimeoutError) {
@@ -204,16 +401,27 @@ export default class WikiCopilotPlugin extends Plugin {
   }
 
   async activateView(): Promise<void> {
-    const existing = this.app.workspace.getLeavesOfType(WIKI_COPILOT_VIEW_TYPE)[0];
+    const existingLeaves = this.app.workspace.getLeavesOfType(WIKI_COPILOT_VIEW_TYPE);
     let leaf: WorkspaceLeaf;
-    if (existing) {
-      leaf = existing;
+    if (Platform.isMobile) {
+      const rootLeaves: WorkspaceLeaf[] = [];
+      this.app.workspace.iterateRootLeaves((candidate) => rootLeaves.push(candidate));
+      const plan = planMobileRootView(rootLeaves, existingLeaves);
+      for (const drawerLeaf of plan.drawerLeaves) {
+        drawerLeaf.detach();
+      }
+      leaf = plan.reusable ?? this.app.workspace.getLeaf("tab");
+      if (!plan.reusable) {
+        await leaf.setViewState({ type: WIKI_COPILOT_VIEW_TYPE, active: true });
+      }
+    } else if (existingLeaves[0]) {
+      leaf = existingLeaves[0];
     } else {
       leaf = this.app.workspace.getRightLeaf(false) ?? this.app.workspace.getLeaf(true);
       await leaf.setViewState({ type: WIKI_COPILOT_VIEW_TYPE, active: true });
     }
     await this.app.workspace.revealLeaf(leaf);
-    if (leaf.view instanceof WikiCopilotView) {
+    if (!Platform.isMobile && leaf.view instanceof WikiCopilotView) {
       leaf.view.focusInput();
     }
   }
@@ -231,6 +439,29 @@ export default class WikiCopilotPlugin extends Plugin {
       `Stable: ${profile.stableSourceRoots.join(", ") || "未识别"}`,
       `Pending: ${profile.pendingSourceRoots.join(", ") || "未识别"}`
     ].join("\n"), 10_000);
+  }
+
+  private showIndexDiagnostics(): void {
+    const activePath = this.app.workspace.getActiveFile()?.path;
+    const diagnostics = this.indexCoordinator.getDiagnostics(activePath);
+    const cacheLabel = diagnostics.cacheScope === "device"
+      ? "设备本地 IndexedDB"
+      : diagnostics.cacheScope === "vault"
+        ? "Vault 插件目录"
+        : "未启用";
+    const activeLine = diagnostics.activePath
+      ? `当前笔记：${diagnostics.activePath.indexed ? "已索引" : "未索引"} · ${diagnostics.activePath.role} · ${diagnostics.activePath.chunks} 片段`
+      : "当前笔记：未打开 Markdown";
+    new Notice([
+      diagnostics.status.message,
+      `缓存：${cacheLabel}`,
+      `Obsidian 当前可见：${diagnostics.visibleMarkdownFiles} 个 Markdown`,
+      `索引跟踪：${diagnostics.trackedMarkdownFiles} 个 Markdown`,
+      `Wiki：${diagnostics.wikiFiles} 页 / ${diagnostics.wikiChunks} 片段`,
+      `稳定原文目录：${diagnostics.sourceFiles} 页`,
+      activeLine,
+      diagnostics.pendingUpdates > 0 ? `等待增量更新：${diagnostics.pendingUpdates} 项` : "增量更新：无积压"
+    ].join("\n"), 15_000);
   }
 
   private async migrateLegacyApiKey(savedData: unknown): Promise<void> {

@@ -2,6 +2,7 @@ const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=
 const TOKEN_RUN =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+|[\p{L}\p{N}][\p{L}\p{N}_./#+:-]*/gu;
 const TECHNICAL_SEPARATOR = /[._/#+:-]+/u;
+const SPACED_IDENTIFIER = /([a-z]{2,})[\s._/#+:-]+(\d[a-z\d]*)/giu;
 const LOWERCASE_OR_NUMBER = /[\p{Ll}\p{N}]/u;
 const UPPERCASE = /\p{Lu}/u;
 const LOWERCASE = /\p{Ll}/u;
@@ -127,18 +128,27 @@ export function tokenizeForSearch(input: string): string[] {
 
 /**
  * Extracts exact alphanumeric identifiers that should act as retrieval anchors.
- * Compound identifiers still contribute their stable atomic parts: for example,
- * `MS6-ND` contributes `ms6`, while ordinary prose and bare numbers do not.
+ * Compound identifiers also contribute stable atomic parts, while ordinary prose
+ * and bare numbers do not. The rule is domain-independent and applies equally to
+ * product IDs, document numbers, software versions, standards, and other entities.
  */
 export function technicalIdentifierTokens(input: string): string[] {
-  return [...new Set(tokenizeForSearch(input)
-    .map((token) => token.toLocaleLowerCase())
-    .filter((token) =>
-      !TECHNICAL_SEPARATOR.test(token) &&
-      /[a-z]/iu.test(token) &&
-      /\d/u.test(token) &&
-      token.length >= 3
-    ))];
+  const normalized = input.normalize("NFKC");
+  const identifiers = new Set<string>();
+  const addIdentifier = (value: string): void => {
+    const token = value.toLocaleLowerCase().split(TECHNICAL_SEPARATOR).join("");
+    if (/[a-z]/iu.test(token) && /\d/u.test(token) && token.length >= 3) {
+      identifiers.add(token);
+    }
+  };
+
+  for (const token of tokenizeForSearch(normalized)) {
+    addIdentifier(token);
+  }
+  for (const match of normalized.matchAll(SPACED_IDENTIFIER)) {
+    addIdentifier(`${match[1] ?? ""}${match[2] ?? ""}`);
+  }
+  return [...identifiers];
 }
 
 export function containsCjk(input: string): boolean {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chunkMarkdown } from "../src/core/markdown-chunker";
+import { chunkMarkdown, compactMarkdownChunks } from "../src/core/markdown-chunker";
 
 describe("chunkMarkdown", () => {
   it("removes frontmatter and preserves the heading hierarchy", () => {
@@ -43,5 +43,24 @@ After the fence.
     );
     expect(chunks.length).toBeGreaterThan(2);
     expect(chunks.every((chunk) => chunk.text.length <= 180)).toBe(true);
+  });
+
+  it("merges adjacent sections for the low-memory mobile index", () => {
+    const markdown = [
+      "# MS6 功耗",
+      "总览。",
+      "## 型号 A",
+      "功耗 1W。",
+      "## 型号 B",
+      "功耗 2W。"
+    ].join("\n\n");
+
+    const regular = chunkMarkdown("wiki/MS6.md", markdown);
+    const compact = compactMarkdownChunks("wiki/MS6.md", markdown, 1_000);
+
+    expect(regular).toHaveLength(3);
+    expect(compact).toHaveLength(1);
+    expect(compact[0]?.heading).toContain("型号 A");
+    expect(compact[0]?.text).toContain("功耗 2W");
   });
 });

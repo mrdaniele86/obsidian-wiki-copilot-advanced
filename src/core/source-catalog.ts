@@ -11,11 +11,21 @@ export interface SourceCatalogHit extends SourceCatalogDocument {
   score: number;
 }
 
+export interface SourceCatalogIndexOptions {
+  useWorker?: boolean;
+}
+
 export class SourceCatalogIndex {
   private index = this.createIndex();
   private readonly documents = new Map<string, SourceCatalogDocument>();
-  private workerClient = SourceCatalogWorkerClient.create();
+  private readonly pathsByIdentifier = new Map<string, Set<string>>();
+  private readonly identifiersByPath = new Map<string, string[]>();
+  private workerClient: SourceCatalogWorkerClient | null;
   private fallbackPromise: Promise<void> | null = null;
+
+  constructor(options: SourceCatalogIndexOptions = {}) {
+    this.workerClient = options.useWorker === false ? null : SourceCatalogWorkerClient.create();
+  }
 
   private createIndex(): MiniSearch<SourceCatalogDocument> {
     return new MiniSearch<SourceCatalogDocument>({
@@ -23,12 +33,14 @@ export class SourceCatalogIndex {
       fields: ["title", "aliases", "headings", "tags", "path"],
       storeFields: [],
       tokenize: tokenizeForSearch,
-      processTerm: (term) => term
+      processTerm: (term) => term,
+      autoVacuum: false
     });
   }
 
   replace(document: Omit<SourceCatalogDocument, "id">): void {
     const indexed = { ...document, id: document.path };
+    this.trackDocumentIdentifiers(indexed);
     this.documents.set(document.path, indexed);
     if (this.workerClient) {
       void this.workerClient.upsert([indexed]).catch(() => this.enableLocalFallback());
@@ -47,6 +59,7 @@ export class SourceCatalogIndex {
       id: document.path
     }));
     for (const document of indexed) {
+      this.trackDocumentIdentifiers(document);
       this.documents.set(document.path, document);
     }
     if (this.workerClient) {
@@ -70,6 +83,7 @@ export class SourceCatalogIndex {
     if (!this.documents.has(path)) {
       return;
     }
+    this.untrackDocumentIdentifiers(path);
     this.documents.delete(path);
     if (this.workerClient) {
       void this.workerClient.remove([path]).catch(() => this.enableLocalFallback());
@@ -83,6 +97,8 @@ export class SourceCatalogIndex {
   clear(): void {
     this.index = this.createIndex();
     this.documents.clear();
+    this.pathsByIdentifier.clear();
+    this.identifiersByPath.clear();
     if (this.workerClient) {
       void this.workerClient.reset().catch(() => this.enableLocalFallback());
     }
@@ -91,6 +107,8 @@ export class SourceCatalogIndex {
   async clearAsync(): Promise<void> {
     this.index = this.createIndex();
     this.documents.clear();
+    this.pathsByIdentifier.clear();
+    this.identifiersByPath.clear();
     if (!this.workerClient) {
       return;
     }
@@ -123,6 +141,10 @@ export class SourceCatalogIndex {
 
   hasPath(path: string): boolean {
     return this.documents.has(path);
+  }
+
+  hasIdentifier(identifier: string): boolean {
+    return (this.pathsByIdentifier.get(identifier.toLocaleLowerCase())?.size ?? 0) > 0;
   }
 
   roleForPath(path: string): KnowledgeRole | undefined {
@@ -227,13 +249,15 @@ export class SourceCatalogIndex {
     const identifierScores = new Map(
       identifierResults.map((result) => [result.id, result.score / identifierMaximum])
     );
-    const union = new Map(
-      [...identifierResults, ...broadResults].map((result) => [result.id, result])
-    );
+    const candidatePaths = new Set([
+      ...identifiers.flatMap((identifier) => [...(this.pathsByIdentifier.get(identifier) ?? [])]),
+      ...identifierResults.map((result) => result.id),
+      ...broadResults.map((result) => result.id)
+    ]);
     const hits: SourceCatalogHit[] = [];
 
-    for (const result of union.values()) {
-      const document = this.documents.get(result.id);
+    for (const path of candidatePaths) {
+      const document = this.documents.get(path);
       if (!document || (document.role === "pending-source" && !includePending)) {
         continue;
       }
@@ -245,7 +269,7 @@ export class SourceCatalogIndex {
       }
       hits.push({
         ...document,
-        score: 1 + (identifierScores.get(result.id) ?? 0) + (broadScores.get(result.id) ?? 0)
+        score: 1 + (identifierScores.get(path) ?? 0) + (broadScores.get(path) ?? 0)
       });
     }
 
@@ -259,6 +283,31 @@ export class SourceCatalogIndex {
       this.index.discard(document.path);
     }
     this.index.add(document);
+  }
+
+  private trackDocumentIdentifiers(document: SourceCatalogDocument): void {
+    this.untrackDocumentIdentifiers(document.path);
+    const identifiers = technicalIdentifierTokens(
+      `${document.title} ${document.aliases} ${document.headings} ${document.path}`
+    );
+    this.identifiersByPath.set(document.path, identifiers);
+    for (const identifier of identifiers) {
+      const paths = this.pathsByIdentifier.get(identifier) ?? new Set<string>();
+      paths.add(document.path);
+      this.pathsByIdentifier.set(identifier, paths);
+    }
+  }
+
+  private untrackDocumentIdentifiers(path: string): void {
+    const identifiers = this.identifiersByPath.get(path) ?? [];
+    for (const identifier of identifiers) {
+      const paths = this.pathsByIdentifier.get(identifier);
+      paths?.delete(path);
+      if (paths?.size === 0) {
+        this.pathsByIdentifier.delete(identifier);
+      }
+    }
+    this.identifiersByPath.delete(path);
   }
 
   private enableLocalFallback(): Promise<void> {

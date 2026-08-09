@@ -5,6 +5,8 @@ describe("Wiki Copilot system prompt", () => {
   it("keeps knowledge-base answers evidence-only and citation-first", () => {
     const prompt = buildSystemPrompt("", true);
     expect(prompt).toContain("Answer only from the evidence");
+    expect(prompt).toContain("Cover all evidence that is relevant to the requested scope");
+    expect(prompt).toContain("instead of stopping after the first match");
     expect(prompt).toContain("[S1]");
     expect(prompt).not.toContain("No relevant knowledge-base evidence was retrieved");
   });
@@ -25,5 +27,22 @@ describe("Wiki Copilot system prompt", () => {
     const prompt = buildSystemPrompt("", true);
     expect(prompt).toContain("Never add a source/reference column");
     expect(prompt).toContain("interface renders source metadata separately");
+  });
+
+  it("defines an unambiguous multi-source citation format", () => {
+    const prompt = buildSystemPrompt("", true);
+    expect(prompt).toContain("[S1][S2]");
+    expect(prompt).toContain("S1/S2");
+    expect(prompt).toContain("invalid citations");
+  });
+
+  it("uses one fixed cross-domain entity and scope policy", () => {
+    const prompt = buildSystemPrompt("", true);
+    expect(prompt).toContain("same reasoning rules to every domain");
+    expect(prompt).toContain("Explicit scope or named entities in the current question");
+    expect(prompt).toContain("Preserve entity fidelity");
+    expect(prompt).toContain("never transfer facts, attributes, conditions, or conclusions");
+    expect(prompt).not.toMatch(/MS6/iu);
+    expect(prompt).not.toMatch(/\b(?:board|port|power consumption)\b/iu);
   });
 });

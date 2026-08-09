@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   modelTimeoutMsForRange,
+  RequestCancelledError,
   RequestTimeoutError,
+  withAbortSignal,
   withTimeout
 } from "../src/llm/request-timeout";
 
@@ -41,5 +43,24 @@ describe("model request timeout", () => {
     expect(modelTimeoutMsForRange("low")).toBe(90_000);
     expect(modelTimeoutMsForRange("medium")).toBe(120_000);
     expect(modelTimeoutMsForRange("high")).toBe(180_000);
+  });
+
+  it("stops waiting for non-cancellable local work when aborted", async () => {
+    const controller = new AbortController();
+    const neverSettles = new Promise<never>(() => undefined);
+    const result = withAbortSignal(neverSettles, controller.signal);
+
+    controller.abort();
+
+    await expect(result).rejects.toBeInstanceOf(RequestCancelledError);
+  });
+
+  it("returns completed local work and removes its abort listener", async () => {
+    const controller = new AbortController();
+    const removeEventListener = vi.spyOn(controller.signal, "removeEventListener");
+
+    await expect(withAbortSignal(Promise.resolve("完成"), controller.signal))
+      .resolves.toBe("完成");
+    expect(removeEventListener).toHaveBeenCalledWith("abort", expect.any(Function));
   });
 });

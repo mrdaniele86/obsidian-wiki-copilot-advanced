@@ -172,3 +172,60 @@ export function chunkMarkdown(
 
   return chunks;
 }
+
+const COMPACT_CHUNK_CHARACTERS = 6_000;
+const COMPACT_HEADING_CHARACTERS = 800;
+
+/**
+ * Mobile keeps fewer MiniSearch documents by merging adjacent sections from the
+ * same Wiki page. Heading text is retained in both metadata and content so the
+ * compact representation preserves section-level search terms.
+ */
+export function compactMarkdownChunks(
+  path: string,
+  markdown: string,
+  maxCharacters = COMPACT_CHUNK_CHARACTERS
+): MarkdownChunk[] {
+  const sourceChunks = chunkMarkdown(path, markdown);
+  if (sourceChunks.length <= 1) {
+    return sourceChunks;
+  }
+
+  const output: MarkdownChunk[] = [];
+  let group: MarkdownChunk[] = [];
+  let groupCharacters = 0;
+
+  const flush = (): void => {
+    const first = group[0];
+    if (!first) {
+      return;
+    }
+    const headings = [...new Set(group.map((chunk) => chunk.heading).filter(Boolean))];
+    const text = group.map((chunk) => (
+      chunk.heading ? `${chunk.heading}\n\n${chunk.text}` : chunk.text
+    )).join("\n\n");
+    const chunkIndex = output.length;
+    output.push({
+      id: `${path}::${chunkIndex}`,
+      path,
+      title: first.title,
+      heading: headings.join(" · ").slice(0, COMPACT_HEADING_CHARACTERS),
+      headingLevel: Math.min(...group.map((chunk) => chunk.headingLevel)),
+      chunkIndex,
+      text
+    });
+    group = [];
+    groupCharacters = 0;
+  };
+
+  for (const chunk of sourceChunks) {
+    const decoratedCharacters = chunk.text.length + chunk.heading.length + 2;
+    if (group.length > 0 && groupCharacters + decoratedCharacters > maxCharacters) {
+      flush();
+    }
+    group.push(chunk);
+    groupCharacters += decoratedCharacters;
+  }
+  flush();
+  return output;
+}

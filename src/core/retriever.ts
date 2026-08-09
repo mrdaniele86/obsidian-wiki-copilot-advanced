@@ -107,19 +107,52 @@ function overlapScore(queryTokens: ReadonlySet<string>, document: SearchDocument
   return overlap / Math.sqrt(queryTokens.size * Math.max(1, documentTokens.size));
 }
 
-function chooseGraphChunk(
-  chunks: SearchDocument[],
+function cachedOverlapScore(
   queryTokens: ReadonlySet<string>,
-  lexicalById: ReadonlyMap<string, RetrievedChunk>
+  document: SearchDocument,
+  overlapById: Map<string, number>
+): number {
+  const cached = overlapById.get(document.id);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const score = overlapScore(queryTokens, document);
+  overlapById.set(document.id, score);
+  return score;
+}
+
+function chooseGraphChunk(
+  chunks: readonly SearchDocument[],
+  queryTokens: ReadonlySet<string>,
+  lexicalById: ReadonlyMap<string, RetrievedChunk>,
+  overlapById: Map<string, number>
 ): SearchDocument | undefined {
-  return [...chunks].sort((left, right) => {
-    const lexicalDifference = (lexicalById.get(right.id)?.score ?? 0) - (lexicalById.get(left.id)?.score ?? 0);
-    if (lexicalDifference !== 0) {
-      return lexicalDifference;
+  let best: SearchDocument | undefined;
+  for (const candidate of chunks) {
+    if (!best) {
+      best = candidate;
+      continue;
     }
-    const overlapDifference = overlapScore(queryTokens, right) - overlapScore(queryTokens, left);
-    return overlapDifference || left.chunkIndex - right.chunkIndex;
-  })[0];
+
+    const candidateLexicalScore = lexicalById.get(candidate.id)?.score ?? 0;
+    const bestLexicalScore = lexicalById.get(best.id)?.score ?? 0;
+    if (candidateLexicalScore !== bestLexicalScore) {
+      if (candidateLexicalScore > bestLexicalScore) {
+        best = candidate;
+      }
+      continue;
+    }
+
+    const candidateOverlap = cachedOverlapScore(queryTokens, candidate, overlapById);
+    const bestOverlap = cachedOverlapScore(queryTokens, best, overlapById);
+    if (
+      candidateOverlap > bestOverlap ||
+      (candidateOverlap === bestOverlap && candidate.chunkIndex < best.chunkIndex)
+    ) {
+      best = candidate;
+    }
+  }
+  return best;
 }
 
 function diversify(candidates: RetrievedChunk[], limit: number, perFile = 2): RetrievedChunk[] {
@@ -264,9 +297,11 @@ export class WikiRetriever {
   ): void {
     const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
     const queryTokens = new Set(tokenizeForSearch(query));
+    const overlapById = new Map<string, number>();
     const anchorPaths = new Set<string>();
+    const lexicalAnchors = [...candidates];
 
-    for (const anchor of candidates) {
+    for (const anchor of lexicalAnchors) {
       if (anchorPaths.has(anchor.path)) {
         continue;
       }
@@ -276,7 +311,7 @@ export class WikiRetriever {
         if (chunks.length === 0 || !roleAllowed(chunks[0]?.role ?? "other", options)) {
           continue;
         }
-        const chunk = chooseGraphChunk(chunks, queryTokens, byId);
+        const chunk = chooseGraphChunk(chunks, queryTokens, byId, overlapById);
         if (!chunk) {
           continue;
         }

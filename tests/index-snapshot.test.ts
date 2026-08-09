@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EvidenceReferenceMap } from "../src/core/evidence-references";
-import { WikiSearchIndex } from "../src/core/search-index";
+import { shouldRestoreIndexSynchronously, WikiSearchIndex } from "../src/core/search-index";
 import type { WikiSearchIndexSnapshot } from "../src/core/search-index";
 import { SourceCatalogIndex } from "../src/core/source-catalog";
 import type { NoteMetadata } from "../src/core/types";
@@ -14,6 +14,16 @@ const metadata: NoteMetadata = {
 };
 
 describe("persistent index snapshots", () => {
+  it("uses synchronous cache restore only while the WebView cannot paint", () => {
+    expect(shouldRestoreIndexSynchronously(null)).toBe(false);
+    expect(shouldRestoreIndexSynchronously({ visibilityState: "visible", hasFocus: () => true }))
+      .toBe(false);
+    expect(shouldRestoreIndexSynchronously({ visibilityState: "hidden", hasFocus: () => false }))
+      .toBe(true);
+    expect(shouldRestoreIndexSynchronously({ visibilityState: "visible", hasFocus: () => false }))
+      .toBe(true);
+  });
+
   it("restores the MiniSearch index without reading and chunking Markdown again", async () => {
     const original = new WikiSearchIndex();
     original.replaceNote(metadata, "# MS6 功耗\n\n待机功耗与运行功耗应分别核对。");
@@ -25,6 +35,37 @@ describe("persistent index snapshots", () => {
     expect(restored.stats).toEqual(original.stats);
     expect(restored.search("MS6功耗")[0]?.document.path).toBe(metadata.path);
     expect(restored.getChunksForPath(metadata.path)[0]?.text).toContain("待机功耗");
+  });
+
+  it("cooperatively rebuilds MiniSearch from document-only mobile snapshots", async () => {
+    const original = new WikiSearchIndex();
+    original.replaceNote(metadata, "# MS6 功耗\n\n待机功耗与运行功耗应分别核对。");
+    const mobileSnapshot = original.createSnapshot({ includeSerializedIndex: false });
+    const restored = new WikiSearchIndex();
+
+    expect(mobileSnapshot.index).toBeNull();
+    await restored.restoreSnapshot(mobileSnapshot);
+
+    expect(restored.stats).toEqual(original.stats);
+    expect(restored.search("待机功耗")[0]?.document.path).toBe(metadata.path);
+  });
+
+  it("keeps repeated replacements stable after the former auto-vacuum threshold", async () => {
+    const index = new WikiSearchIndex();
+
+    for (let version = 0; version < 40; version += 1) {
+      const marker = version === 0
+        ? "obsoletezero"
+        : version === 39
+          ? "currentforty"
+          : `intermediate${version}`;
+      index.replaceNote(metadata, `# MS6 功耗\n\n版本 ${version} 的唯一内容 ${marker}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(index.stats.files).toBe(1);
+    expect(index.search("currentforty")[0]?.document.path).toBe(metadata.path);
+    expect(index.search("obsoletezero")).toEqual([]);
   });
 
   it("restores the source catalog and Wiki-to-source references", async () => {

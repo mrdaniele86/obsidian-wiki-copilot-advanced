@@ -1,11 +1,7 @@
 import { App, PluginSettingTab } from "obsidian";
 import type { SettingDefinitionItem } from "obsidian";
 import { DEFAULT_PROFILE_CONFIG } from "./core/profile";
-import {
-  DEFAULT_RETRIEVAL_RANGE,
-  isRetrievalRange,
-  retrievalOptionsForRange
-} from "./core/retriever";
+import { retrievalOptionsForRange } from "./core/retriever";
 import type { KnowledgeProfileConfig, RetrievalOptions, RetrievalRange } from "./core/types";
 import type WikiCopilotPlugin from "./main";
 import {
@@ -18,6 +14,10 @@ import {
 } from "./model-presets";
 import type { ModelProvider } from "./model-presets";
 
+export type RetrievalMode = "precise" | "fast";
+
+export const DEFAULT_RETRIEVAL_MODE: RetrievalMode = "precise";
+
 export interface ModelSettings {
   provider: ModelProvider;
   serviceName: string;
@@ -28,6 +28,7 @@ export interface ModelSettings {
 export interface WikiCopilotSettings {
   autoDetectProfile: boolean;
   profile: KnowledgeProfileConfig;
+  retrievalMode: RetrievalMode;
   retrievalRange: RetrievalRange;
   retrieval: RetrievalOptions;
   prioritizeActiveNote: boolean;
@@ -45,8 +46,12 @@ export const DEFAULT_SETTINGS: WikiCopilotSettings = {
     pendingSourceRoots: [...DEFAULT_PROFILE_CONFIG.pendingSourceRoots],
     excludedRoots: [...DEFAULT_PROFILE_CONFIG.excludedRoots]
   },
-  retrievalRange: DEFAULT_RETRIEVAL_RANGE,
-  retrieval: retrievalOptionsForRange(DEFAULT_RETRIEVAL_RANGE),
+  retrievalMode: DEFAULT_RETRIEVAL_MODE,
+  retrievalRange: "high",
+  retrieval: {
+    ...retrievalOptionsForRange("high"),
+    includePending: true
+  },
   prioritizeActiveNote: true,
   model: {
     provider: "openai",
@@ -55,6 +60,25 @@ export const DEFAULT_SETTINGS: WikiCopilotSettings = {
     model: "gpt-5.6-terra"
   }
 };
+
+export function isRetrievalMode(value: unknown): value is RetrievalMode {
+  return value === "precise" || value === "fast";
+}
+
+function retrievalSettingsForMode(mode: RetrievalMode): {
+  answerTimeoutRange: RetrievalRange;
+  options: RetrievalOptions;
+} {
+  const answerTimeoutRange: RetrievalRange = mode === "precise" ? "high" : "low";
+  const retrievalBudget: RetrievalRange = mode === "precise" ? "high" : "medium";
+  return {
+    answerTimeoutRange,
+    options: {
+      ...retrievalOptionsForRange(retrievalBudget),
+      includePending: mode === "precise"
+    }
+  };
+}
 
 function stringArray(value: unknown, fallback: string[]): string[] {
   return Array.isArray(value)
@@ -74,9 +98,10 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
       : DEFAULT_SETTINGS.model.provider;
   const savedModel = typeof rawModel.model === "string" ? rawModel.model.trim() : "";
   const savedServiceName = typeof rawModel.serviceName === "string" ? rawModel.serviceName.trim() : "";
-  const retrievalRange = isRetrievalRange(raw.retrievalRange)
-    ? raw.retrievalRange
-    : DEFAULT_RETRIEVAL_RANGE;
+  const retrievalMode = isRetrievalMode(raw.retrievalMode)
+    ? raw.retrievalMode
+    : DEFAULT_RETRIEVAL_MODE;
+  const retrievalSettings = retrievalSettingsForMode(retrievalMode);
 
   return {
     autoDetectProfile: true,
@@ -88,8 +113,9 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
       pendingSourceRoots: stringArray(rawProfile.pendingSourceRoots, DEFAULT_SETTINGS.profile.pendingSourceRoots),
       excludedRoots: stringArray(rawProfile.excludedRoots, DEFAULT_SETTINGS.profile.excludedRoots)
     },
-    retrievalRange,
-    retrieval: retrievalOptionsForRange(retrievalRange),
+    retrievalMode,
+    retrievalRange: retrievalSettings.answerTimeoutRange,
+    retrieval: retrievalSettings.options,
     prioritizeActiveNote: true,
     model: {
       provider,
@@ -117,7 +143,7 @@ type WikiCopilotSettingKey =
   | "serviceName"
   | "endpoint"
   | "model"
-  | "retrievalRange";
+  | "retrievalMode";
 
 export class WikiCopilotSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: WikiCopilotPlugin) {
@@ -137,12 +163,12 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
     return [
       {
         name: "Wiki Copilot",
-        desc: "面向持久化 LLM Wiki 的知识库问答插件。优先检索沉淀知识，按需核对稳定原文，并生成带来源引用的回答。",
+        desc: "面向 LLM Wiki 的知识库问答插件，支持精准检索与来源引用。",
         render: (setting) => {
           setting
             .setClass("wiki-copilot-settings-intro")
             .setName("Wiki Copilot")
-            .setDesc("面向持久化 LLM Wiki 的知识库问答插件。优先检索沉淀知识，按需核对稳定原文，并生成带来源引用的回答。")
+            .setDesc("面向 LLM Wiki 的知识库问答插件，支持精准检索与来源引用。")
             .setHeading();
         }
       },
@@ -228,15 +254,14 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
         heading: "知识检索",
         items: [
           {
-            name: "范围与深度",
-            desc: "每次回答最多参考：低 12 页、中 24 页、高 36 页。档位越高，覆盖越广，等待时间也可能越长。",
+            name: "检索模式",
+            desc: "精准扫描全部 Markdown；快速搜索已整理 Wiki。",
             control: {
               type: "dropdown",
-              key: "retrievalRange",
+              key: "retrievalMode",
               options: {
-                low: "低（更快）",
-                medium: "中（推荐）",
-                high: "高（更全面）"
+                precise: "精准（推荐）",
+                fast: "快速"
               }
             }
           }
@@ -255,8 +280,8 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
         return this.plugin.settings.model.endpoint;
       case "model":
         return this.plugin.settings.model.model;
-      case "retrievalRange":
-        return this.plugin.settings.retrievalRange;
+      case "retrievalMode":
+        return this.plugin.settings.retrievalMode;
     }
   }
 
@@ -287,12 +312,16 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
           this.plugin.settings.model.model = value.trim();
         }
         break;
-      case "retrievalRange":
-        if (!isRetrievalRange(value)) {
+      case "retrievalMode":
+        if (!isRetrievalMode(value)) {
           return;
         }
-        this.plugin.settings.retrievalRange = value;
-        this.plugin.settings.retrieval = retrievalOptionsForRange(value);
+        this.plugin.settings.retrievalMode = value;
+        {
+          const retrievalSettings = retrievalSettingsForMode(value);
+          this.plugin.settings.retrievalRange = retrievalSettings.answerTimeoutRange;
+          this.plugin.settings.retrieval = retrievalSettings.options;
+        }
         break;
     }
     await this.plugin.saveSettings();

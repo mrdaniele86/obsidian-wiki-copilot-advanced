@@ -5,6 +5,7 @@ import { buildAnswerContext } from "./core/context-builder";
 import type {
   AnswerResult,
   AnswerRetrievalMetrics,
+  ChatTurn,
   RetrievalResult,
   SourceReference
 } from "./core/types";
@@ -18,7 +19,6 @@ import { technicalIdentifierTokens } from "./core/tokenizer";
 import { OpenAICompatibleClient } from "./llm/openai-compatible";
 import type {
   ActiveCompletionMode,
-  ChatTurn,
   CompletionActivity,
   ModelResponseMode
 } from "./llm/openai-compatible";
@@ -50,6 +50,8 @@ import { citationOpenState } from "./ui/citation-open-state";
 import { ReusableLeafController } from "./ui/temporary-leaf-controller";
 import { planMobileRootView } from "./ui/view-leaf-placement";
 import { WikiCopilotView, WIKI_COPILOT_VIEW_TYPE } from "./ui/wiki-copilot-view";
+
+const RETRIEVAL_PLANNER_TIMEOUT_MS = 15_000;
 
 export interface AnswerOptions {
   signal?: AbortSignal;
@@ -259,13 +261,54 @@ export default class WikiCopilotPlugin extends Plugin {
     }
     await withAbortSignal(this.indexCoordinator.ensureReady(), signal);
     const retrievalQuery = retrievalQueryForQuestion(question, history);
+    const precise = this.settings.retrievalMode === "precise";
+    let searchQueries = [retrievalQuery];
+    if (this.isModelConfigured()) {
+      reportProgress("正在生成检索关键词…");
+      try {
+        searchQueries = await this.llmClient.planRetrievalQueries(
+          retrievalQuery,
+          this.settings.model,
+          RETRIEVAL_PLANNER_TIMEOUT_MS,
+          {
+            signal,
+            mode: this.settings.retrievalMode,
+            history,
+            question
+          }
+        );
+      } catch (error) {
+        if (error instanceof RequestCancelledError) {
+          throw error;
+        }
+        console.warn("Wiki Copilot: 检索关键词规划不可用，继续使用原始问题。", error);
+      }
+    }
+    if (precise) {
+      reportProgress("正在核对候选资料…");
+    }
     const activePath = this.settings.prioritizeActiveNote
       ? this.app.workspace.getActiveFile()?.path
       : undefined;
+    const runRetrieval = (): Promise<RetrievalResult> =>
+      precise
+        ? this.indexCoordinator.retrieveAllMarkdown(
+          retrievalQuery,
+          searchQueries,
+          { ...this.settings.retrieval, activePath },
+          reportProgress,
+          signal
+        )
+        : this.indexCoordinator.retriever.retrievePlannedQueries(
+          retrievalQuery,
+          searchQueries,
+          { ...this.settings.retrieval, activePath },
+          reportProgress
+        );
 
     const hasExactIdentifiers = technicalIdentifierTokens(retrievalQuery).length > 0;
     let identifierRepairAttempted = false;
-    if (Platform.isMobile && hasExactIdentifiers) {
+    if (!precise && Platform.isMobile && hasExactIdentifiers) {
       reportProgress("正在校验本机精确标识符索引…");
       await withAbortSignal(
         this.indexCoordinator.repairTechnicalIdentifierCoverage(retrievalQuery),
@@ -275,13 +318,10 @@ export default class WikiCopilotPlugin extends Plugin {
     }
 
     let result = await withAbortSignal(
-      this.indexCoordinator.retriever.retrieve(retrievalQuery, {
-        ...this.settings.retrieval,
-        activePath
-      }, reportProgress),
+      runRetrieval(),
       signal
     );
-    if (!identifierRepairAttempted && !hasTechnicalIdentifierAnchor(retrievalQuery, result)) {
+    if (!precise && !identifierRepairAttempted && !hasTechnicalIdentifierAnchor(retrievalQuery, result)) {
       reportProgress("正在校验本机精确标识符索引…");
       const repaired = await withAbortSignal(
         this.indexCoordinator.repairTechnicalIdentifierCoverage(retrievalQuery),
@@ -290,28 +330,22 @@ export default class WikiCopilotPlugin extends Plugin {
       if (repaired > 0) {
         reportProgress(`已补齐 ${repaired} 个标识符索引条目，正在重新检索…`);
         result = await withAbortSignal(
-          this.indexCoordinator.retriever.retrieve(retrievalQuery, {
-            ...this.settings.retrieval,
-            activePath
-          }, reportProgress),
+          runRetrieval(),
           signal
         );
       }
     }
     let guardedResult = discardUnanchoredTechnicalResult(retrievalQuery, result);
-    if (Platform.isMobile && guardedResult.chunks.length === 0) {
+    if (!precise && Platform.isMobile && guardedResult.chunks.length === 0) {
       reportProgress("正在直接检查本机知识文件…");
       const repaired = await withAbortSignal(
-        this.indexCoordinator.repairLexicalCoverage(retrievalQuery),
+        this.indexCoordinator.repairLexicalCoverage(searchQueries.join(" ")),
         signal
       );
       if (repaired > 0) {
         reportProgress(`已补齐 ${repaired} 个查询相关索引条目，正在重新检索…`);
         result = await withAbortSignal(
-          this.indexCoordinator.retriever.retrieve(retrievalQuery, {
-            ...this.settings.retrieval,
-            activePath
-          }, reportProgress),
+          runRetrieval(),
           signal
         );
         guardedResult = discardUnanchoredTechnicalResult(retrievalQuery, result);
@@ -362,6 +396,7 @@ export default class WikiCopilotPlugin extends Plugin {
       ? `已检索 ${retrieval.chunks.length} 个知识页面，${modelServiceName}思考中…`
       : `未命中当前知识库，${modelServiceName}思考中…`);
     const retrievalRange = this.settings.retrievalRange;
+    const retrievalMode = this.settings.retrievalMode;
     const timeoutMilliseconds = modelTimeoutMsForRange(retrievalRange);
     let rawMarkdown: string;
     try {
@@ -390,7 +425,7 @@ export default class WikiCopilotPlugin extends Plugin {
     } catch (error) {
       if (error instanceof RequestTimeoutError) {
         throw new AnswerTimeoutError(
-          answerTimeoutMessage(modelServiceName, error.milliseconds, retrievalRange),
+          answerTimeoutMessage(modelServiceName, error.milliseconds, retrievalMode),
           retrieval
         );
       }
@@ -432,12 +467,15 @@ export default class WikiCopilotPlugin extends Plugin {
       new Notice("知识库结构尚未识别完成。 ");
       return;
     }
+    const sourceRoots = [...new Set([
+      ...profile.stableSourceRoots,
+      ...profile.pendingSourceRoots
+    ])];
     new Notice([
       `Schema: ${profile.schemaFiles.join(", ") || "未识别"}`,
       `Index: ${profile.indexFiles.join(", ") || "未识别"}`,
       `Wiki: ${profile.wikiRoots.join(", ") || "未识别"}`,
-      `Stable: ${profile.stableSourceRoots.join(", ") || "未识别"}`,
-      `Pending: ${profile.pendingSourceRoots.join(", ") || "未识别"}`
+      `Sources: ${sourceRoots.join(", ") || "未识别"}`
     ].join("\n"), 10_000);
   }
 
@@ -458,7 +496,7 @@ export default class WikiCopilotPlugin extends Plugin {
       `Obsidian 当前可见：${diagnostics.visibleMarkdownFiles} 个 Markdown`,
       `索引跟踪：${diagnostics.trackedMarkdownFiles} 个 Markdown`,
       `Wiki：${diagnostics.wikiFiles} 页 / ${diagnostics.wikiChunks} 片段`,
-      `稳定原文目录：${diagnostics.sourceFiles} 页`,
+      `原文目录：${diagnostics.sourceFiles} 页`,
       activeLine,
       diagnostics.pendingUpdates > 0 ? `等待增量更新：${diagnostics.pendingUpdates} 项` : "增量更新：无积压"
     ].join("\n"), 15_000);

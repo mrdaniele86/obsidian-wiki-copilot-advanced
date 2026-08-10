@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { EvidenceReferenceMap } from "../src/core/evidence-references";
 import { shouldRestoreIndexSynchronously, WikiSearchIndex } from "../src/core/search-index";
 import type { WikiSearchIndexSnapshot } from "../src/core/search-index";
 import { SourceCatalogIndex } from "../src/core/source-catalog";
@@ -68,7 +67,7 @@ describe("persistent index snapshots", () => {
     expect(index.search("obsoletezero")).toEqual([]);
   });
 
-  it("restores the source catalog and Wiki-to-source references", async () => {
+  it("restores the metadata-only source catalog", async () => {
     const originalCatalog = new SourceCatalogIndex();
     await originalCatalog.replaceAsync({
       path: "raw/processed/ms6.md",
@@ -81,15 +80,8 @@ describe("persistent index snapshots", () => {
     const restoredCatalog = new SourceCatalogIndex();
     await restoredCatalog.restoreSnapshot(originalCatalog.createSnapshot());
 
-    const references = new EvidenceReferenceMap();
-    references.restoreSnapshot([[
-      metadata.path,
-      ["raw/processed/ms6.md"]
-    ]]);
-
     expect((await restoredCatalog.searchAsync("MS6功耗", false))[0]?.path)
       .toBe("raw/processed/ms6.md");
-    expect(references.relatedTo([metadata.path])).toEqual(["raw/processed/ms6.md"]);
     originalCatalog.destroy();
     restoredCatalog.destroy();
   });

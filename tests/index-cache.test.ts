@@ -27,6 +27,7 @@ const profile: KnowledgeProfile = {
 const settings: WikiCopilotSettings = {
   autoDetectProfile: true,
   profile,
+  retrievalMode: "fast",
   retrievalRange: "medium",
   retrieval: {
     includePending: false,
@@ -70,7 +71,6 @@ function snapshot(): IndexCacheSnapshot {
     files: [{ path: metadata.path, mtime: 10, size: 20 }],
     searchIndex: searchIndex.createSnapshot(),
     sourceCatalog: [],
-    evidenceReferences: [],
     linkGraph: [[metadata.path, [["raw/processed/ms6.md", 1]]]]
   };
 }
@@ -115,7 +115,7 @@ describe("index cache metadata", () => {
     });
   });
 
-  it("invalidates for structural retrieval changes but not model changes", () => {
+  it("invalidates only for settings that change the persistent index shape", () => {
     const original = indexSettingsKey(settings);
     expect(indexSettingsKey({
       ...settings,
@@ -135,6 +135,15 @@ describe("index cache metadata", () => {
     expect(indexSettingsKey({
       ...settings,
       retrieval: { ...settings.retrieval, includePending: true }
+    })).toBe(original);
+    expect(indexSettingsKey({
+      ...settings,
+      retrievalMode: "precise",
+      retrieval: { ...settings.retrieval, includePending: true }
+    })).toBe(original);
+    expect(indexSettingsKey({
+      ...settings,
+      retrieval: { ...settings.retrieval, includeOtherNotes: true }
     })).not.toBe(original);
   });
 });

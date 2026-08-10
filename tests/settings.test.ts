@@ -12,25 +12,29 @@ import {
   WikiCopilotSettingTab
 } from "../src/settings";
 
-describe("retrieval range settings", () => {
-  it("uses the medium range by default", () => {
+describe("retrieval mode settings", () => {
+  it("uses precise retrieval by default", () => {
     const settings = loadWikiCopilotSettings(undefined);
 
-    expect(settings.retrievalRange).toBe("medium");
-    expect(settings.retrieval).toMatchObject({
-      maxSummaryResults: 8,
-      maxRetrievedPages: 24,
-      maxEvidenceFiles: 8,
-      maxContextCharacters: 30_000
-    });
-    expect(DEFAULT_SETTINGS.retrievalRange).toBe("medium");
-  });
-
-  it("restores the selected range and derives all retrieval limits from it", () => {
-    const settings = loadWikiCopilotSettings({ retrievalRange: "high" });
-
+    expect(settings.retrievalMode).toBe("precise");
     expect(settings.retrievalRange).toBe("high");
     expect(settings.retrieval).toMatchObject({
+      includePending: true,
+      maxSummaryResults: 12,
+      maxRetrievedPages: 36,
+      maxEvidenceFiles: 12,
+      maxContextCharacters: 48_000
+    });
+    expect(DEFAULT_SETTINGS.retrievalMode).toBe("precise");
+  });
+
+  it("restores precise mode and derives its wider candidate limits", () => {
+    const settings = loadWikiCopilotSettings({ retrievalMode: "precise" });
+
+    expect(settings.retrievalMode).toBe("precise");
+    expect(settings.retrievalRange).toBe("high");
+    expect(settings.retrieval).toMatchObject({
+      includePending: true,
       maxIndexResults: 2,
       maxTopicConceptResults: 6,
       maxSummaryResults: 12,
@@ -42,22 +46,36 @@ describe("retrieval range settings", () => {
     });
   });
 
-  it("uses a 12-page budget for the low range", () => {
-    const settings = loadWikiCopilotSettings({ retrievalRange: "low" });
+  it("uses the balanced curated-Wiki budget in fast mode", () => {
+    const settings = loadWikiCopilotSettings({ retrievalMode: "fast" });
 
+    expect(settings.retrievalMode).toBe("fast");
     expect(settings.retrievalRange).toBe("low");
     expect(settings.retrieval).toMatchObject({
-      maxRetrievedPages: 12,
-      maxEvidenceFiles: 4,
-      maxContextCharacters: 18_000
+      includePending: false,
+      maxIndexResults: 1,
+      maxTopicConceptResults: 4,
+      maxSummaryResults: 8,
+      maxWikiResults: 4,
+      maxRetrievedPages: 24,
+      maxEvidenceFiles: 8,
+      maxContextCharacters: 30_000
     });
   });
 
-  it("falls back safely when the saved range is invalid", () => {
-    const settings = loadWikiCopilotSettings({ retrievalRange: "extreme" });
+  it("migrates legacy range-only settings to precise mode", () => {
+    const settings = loadWikiCopilotSettings({ retrievalRange: "low" });
 
-    expect(settings.retrievalRange).toBe("medium");
-    expect(settings.retrieval.maxContextCharacters).toBe(30_000);
+    expect(settings.retrievalMode).toBe("precise");
+    expect(settings.retrievalRange).toBe("high");
+    expect(settings.retrieval.includePending).toBe(true);
+  });
+
+  it("falls back safely when the saved mode is invalid", () => {
+    const settings = loadWikiCopilotSettings({ retrievalMode: "extreme" });
+
+    expect(settings.retrievalMode).toBe("precise");
+    expect(settings.retrievalRange).toBe("high");
   });
 });
 
@@ -82,7 +100,35 @@ describe("model response mode settings", () => {
 });
 
 describe("settings presentation", () => {
-  it("marks the plugin introduction for spacious mobile styling", () => {
+  it("exposes precise and fast retrieval without the legacy range control", () => {
+    const plugin = {
+      settings: loadWikiCopilotSettings(undefined),
+      getApiKey: () => null
+    };
+    const tab = new WikiCopilotSettingTab({} as never, plugin as never);
+    const definitions = tab.getSettingDefinitions() as unknown as Array<{
+      items?: Array<{
+        name?: string;
+        desc?: string;
+        control?: { key?: string; options?: Record<string, string> };
+      }>;
+    }>;
+    const retrieval = definitions.flatMap((definition) => definition.items ?? [])
+      .find((item) => item.name === "检索模式");
+
+    expect(retrieval?.control).toMatchObject({
+      key: "retrievalMode",
+      options: {
+        precise: "精准（推荐）",
+        fast: "快速"
+      }
+    });
+    expect(retrieval?.desc).toBe(
+      "精准扫描全部 Markdown；快速搜索已整理 Wiki。"
+    );
+  });
+
+  it("renders a concise plugin introduction with the responsive styling hook", () => {
     const plugin = {
       settings: loadWikiCopilotSettings(undefined),
       getApiKey: () => null
@@ -104,6 +150,9 @@ describe("settings presentation", () => {
     intro.render(setting, {});
 
     expect(setting.setClass).toHaveBeenCalledWith("wiki-copilot-settings-intro");
+    expect(setting.setDesc).toHaveBeenCalledWith(
+      "面向 LLM Wiki 的知识库问答插件，支持精准检索与来源引用。"
+    );
     expect(setting.setHeading).toHaveBeenCalledOnce();
   });
 });

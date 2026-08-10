@@ -9,6 +9,8 @@ describe("Wiki Copilot system prompt", () => {
     expect(prompt).toContain("instead of stopping after the first match");
     expect(prompt).toContain("[S1]");
     expect(prompt).not.toContain("No relevant knowledge-base evidence was retrieved");
+    expect(prompt).not.toContain("unverified");
+    expect(prompt).not.toContain("pending area");
   });
 
   it("allows a clearly labeled general answer when retrieval has no hit", () => {
@@ -39,7 +41,9 @@ describe("Wiki Copilot system prompt", () => {
   it("uses one fixed cross-domain entity and scope policy", () => {
     const prompt = buildSystemPrompt("", true);
     expect(prompt).toContain("same reasoning rules to every domain");
-    expect(prompt).toContain("Explicit scope or named entities in the current question");
+    expect(prompt).toContain("Treat recent conversation as active context");
+    expect(prompt).toContain("established subjects, scope, comparisons, filters, definitions");
+    expect(prompt).toContain("explicit scope or named entities in the current question");
     expect(prompt).toContain("Preserve entity fidelity");
     expect(prompt).toContain("never transfer facts, attributes, conditions, or conclusions");
     expect(prompt).not.toMatch(/MS6/iu);

@@ -59,6 +59,119 @@ afterEach(() => {
 });
 
 describe("OpenAICompatibleClient streaming", () => {
+  it("plans bounded lexical query variants without sending an answer request", async () => {
+    const requester = vi.fn(async (_request: unknown) => nonStreamingResponse(
+      '{"queries":["PCBA test requirements","PCBA printed circuit board assembly acceptance criteria"]}'
+    ));
+    const client = new OpenAICompatibleClient(() => null, {
+      fetcher: vi.fn(),
+      requester,
+      timerHost: timerHost()
+    });
+
+    await expect(client.planRetrievalQueries(
+      "pcba测试要求",
+      settings(),
+      15_000
+    )).resolves.toEqual([
+      "pcba测试要求",
+      "PCBA test requirements",
+      "PCBA printed circuit board assembly acceptance criteria"
+    ]);
+
+    const sentRequest = requester.mock.calls[0]?.[0] as { body?: string } | undefined;
+    const requestBody = JSON.parse(String(sentRequest?.body)) as {
+      stream?: boolean;
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(requestBody.stream).toBe(false);
+    expect(requestBody.messages[0]?.content).toContain("Do not answer the question");
+    expect(requestBody.messages[1]?.content).toBe("pcba测试要求");
+  });
+
+  it("uses the lightweight planner limits for fast retrieval", async () => {
+    const requester = vi.fn(async (_request: unknown) => nonStreamingResponse(JSON.stringify({
+      queries: [
+        "brake test requirements",
+        "制动 验收 标准",
+        "braking validation criteria",
+        "brake inspection specification",
+        "制动测试条件",
+        "制动性能验证",
+        "制动系统测试规范"
+      ]
+    })));
+    const client = new OpenAICompatibleClient(() => null, {
+      fetcher: vi.fn(),
+      requester,
+      timerHost: timerHost()
+    });
+
+    await expect(client.planRetrievalQueries(
+      "制动测试要求",
+      settings(),
+      15_000,
+      { mode: "fast" }
+    )).resolves.toEqual([
+      "制动测试要求",
+      "brake test requirements",
+      "制动 验收 标准",
+      "braking validation criteria",
+      "brake inspection specification",
+      "制动测试条件",
+      "制动性能验证"
+    ]);
+
+    const sentRequest = requester.mock.calls[0]?.[0] as { body?: string } | undefined;
+    const requestBody = JSON.parse(String(sentRequest?.body)) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(requestBody.messages[0]?.content).toContain("Produce 3 to 6 short keyword queries");
+  });
+
+  it("uses recent conversation context when planning a follow-up search", async () => {
+    const requester = vi.fn(async (_request: unknown) => nonStreamingResponse(
+      '{"queries":["ZX9 power consumption","ZX9 功耗 测试条件"]}'
+    ));
+    const client = new OpenAICompatibleClient(() => null, {
+      fetcher: vi.fn(),
+      requester,
+      timerHost: timerHost()
+    });
+
+    await expect(client.planRetrievalQueries(
+      "功耗呢",
+      settings(),
+      15_000,
+      {
+        mode: "precise",
+        history: [
+          { role: "user", content: "先看 ZX9 的端口定义" },
+          { role: "assistant", content: "ZX9 有 12 个端口 [S3]" }
+        ]
+      }
+    )).resolves.toEqual([
+      "功耗呢",
+      "ZX9 power consumption",
+      "ZX9 功耗 测试条件"
+    ]);
+
+    const sentRequest = requester.mock.calls[0]?.[0] as { body?: string } | undefined;
+    const requestBody = JSON.parse(String(sentRequest?.body)) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(requestBody.messages.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "user"
+    ]);
+    expect(requestBody.messages[0]?.content).toContain("active scope");
+    expect(requestBody.messages[1]?.content).toBe("先看 ZX9 的端口定义");
+    expect(requestBody.messages[2]?.content).toBe("ZX9 有 12 个端口 [prior source]");
+    expect(requestBody.messages[3]?.content).toBe("功耗呢");
+  });
+
   it("streams Chat Completions deltas and sends stream=true", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
       responseStream([
@@ -121,11 +234,40 @@ describe("OpenAICompatibleClient streaming", () => {
     const currentPrompt = requestBody.messages[3]?.content ?? "";
     expect(systemPrompt).toContain("same reasoning rules to every domain");
     expect(systemPrompt).toContain("Preserve entity fidelity");
-    expect(systemPrompt).toContain("Explicit scope or named entities in the current question");
+    expect(systemPrompt).toContain("explicit scope or named entities in the current question");
     expect(currentPrompt).not.toContain("Technical identifier family anchors");
     expect(currentPrompt).toContain("Question:\n所有 ZX9 功耗");
     expect(currentPrompt).toContain("Evidence for this turn:");
     expect(currentPrompt).not.toMatch(/MS6/iu);
+  });
+
+  it("keeps the ten most recent conversation turns within a bounded prompt", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
+      responseStream([
+        "data: {\"choices\":[{\"delta\":{\"content\":\"回答\"},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: [DONE]\n\n"
+      ]),
+      { status: 200, headers: { "Content-Type": "text/event-stream" } }
+    ));
+    const client = new OpenAICompatibleClient(() => null, {
+      fetcher,
+      requester: vi.fn(async () => nonStreamingResponse()),
+      timerHost: timerHost()
+    });
+    const history = Array.from({ length: 12 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" as const : "assistant" as const,
+      content: `turn-${index}`
+    }));
+
+    await client.answer("继续", context, history, "", settings(), 90_000);
+
+    const requestBody = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(requestBody.messages).toHaveLength(12);
+    expect(requestBody.messages[1]?.content).toBe("turn-2");
+    expect(requestBody.messages[10]?.content).toBe("turn-11");
+    expect(requestBody.messages[11]?.content).toContain("Question:\n继续");
   });
 
   it("instructs the model not to merge or abbreviate a fully specified variant", async () => {

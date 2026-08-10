@@ -1,6 +1,7 @@
 import { requestUrl } from "obsidian";
 import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
 import type { BuiltContext } from "../core/context-builder";
+import type { ChatTurn } from "../core/types";
 import { providerRequiresApiKey } from "../model-presets";
 import type { ModelSettings } from "../settings";
 import {
@@ -11,11 +12,8 @@ import {
 import { completionRequestOptions } from "./completion-request";
 import { buildSystemPrompt } from "./prompt";
 import { RequestCancelledError, RequestTimeoutError } from "./request-timeout";
-
-export interface ChatTurn {
-  role: "user" | "assistant";
-  content: string;
-}
+import { parseRetrievalQueries } from "../core/retrieval-plan";
+import type { RetrievalPlanningMode } from "../core/retrieval-plan";
 
 interface ChatCompletionResponse {
   choices?: Array<{
@@ -38,6 +36,13 @@ export interface CompletionAnswerOptions {
   onDelta?: (delta: string) => void;
   onResponseMode?: (mode: ActiveCompletionMode, detail?: string) => void;
   onActivity?: (activity: CompletionActivity) => void;
+}
+
+export interface RetrievalPlanningOptions {
+  signal?: AbortSignal;
+  mode?: RetrievalPlanningMode;
+  history?: readonly ChatTurn[];
+  question?: string;
 }
 
 export class StreamFallbackRequiredError extends Error {
@@ -74,6 +79,27 @@ interface PreparedCompletionRequest {
   url: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
+}
+
+const ANSWER_HISTORY_MAX_TURNS = 10;
+const ANSWER_HISTORY_MAX_CHARACTERS = 24_000;
+const PLANNER_HISTORY_MAX_TURNS = 4;
+const PLANNER_HISTORY_MAX_CHARACTERS = 8_000;
+
+function retrievalPlannerPrompt(mode: RetrievalPlanningMode): string {
+  const queryCount = mode === "fast" ? "3 to 6" : "4 to 10";
+  return `You plan lexical searches for a local Markdown knowledge base.
+
+Return JSON only in this shape: {"queries":["..."]}.
+
+Rules:
+- Do not answer the question and do not add explanations.
+- Use recent conversation messages, when provided, to resolve omitted subjects, references, active scope, and follow-up constraints. The latest user query overrides any scope it explicitly replaces.
+- Produce ${queryCount} short keyword queries when the question supports useful variants. The caller also searches the original question.
+- Supply the discriminating lexical terms needed to search Markdown bodies, including terminology variants, full names and abbreviations, and Chinese/English translations when useful.
+- Preserve every explicit name, identifier, version, number, quoted label, acronym, scope, and list/all intent. Never replace it with a merely similar entity.
+- Do not invent domain facts, product names, document numbers, or a narrower scope.
+- Each query must be independently useful for literal full-text search, must retain the explicit entity or scope, and should contain only discriminating terms.`;
 }
 
 function currentWindow(): Window {
@@ -116,11 +142,27 @@ function responseErrorDetail(text: string, status: number): string {
   return body.error?.message?.trim() || text.slice(0, 500).trim() || `HTTP ${status}`;
 }
 
-function historyForModel(history: ChatTurn[]): ChatTurn[] {
-  return history.slice(-6).map((turn) => ({
-    ...turn,
-    content: turn.content.replace(/\[S\d+\]/gu, "[prior source]")
-  }));
+function historyForModel(
+  history: readonly ChatTurn[],
+  maxTurns: number,
+  maxCharacters: number
+): ChatTurn[] {
+  const selected: ChatTurn[] = [];
+  let remainingCharacters = maxCharacters;
+  for (let index = history.length - 1; index >= 0 && selected.length < maxTurns; index -= 1) {
+    const turn = history[index];
+    if (!turn || remainingCharacters <= 0) {
+      continue;
+    }
+    const cleaned = turn.content.replace(/\[S\d+\]/gu, "[prior source]").trim();
+    if (!cleaned) {
+      continue;
+    }
+    const content = cleaned.slice(0, remainingCharacters);
+    selected.unshift({ role: turn.role, content });
+    remainingCharacters -= content.length;
+  }
+  return selected;
 }
 
 function streamUnsupported(status: number, detail: string): boolean {
@@ -231,31 +273,44 @@ export class OpenAICompatibleClient {
     }
   }
 
+  async planRetrievalQueries(
+    query: string,
+    settings: ModelSettings,
+    timeoutMilliseconds: number,
+    options: RetrievalPlanningOptions = {}
+  ): Promise<string[]> {
+    const mode = options.mode ?? "precise";
+    const history = options.history ?? [];
+    const request = this.prepareRetrievalPlannerRequest(
+      options.question?.trim() || query,
+      settings,
+      mode,
+      history
+    );
+    const response = await this.answerNonStreaming(
+      request,
+      timeoutMilliseconds,
+      options.signal
+    );
+    return parseRetrievalQueries(query, response, mode);
+  }
+
   private prepareRequest(
     question: string,
     builtContext: BuiltContext,
-    history: ChatTurn[],
+    history: readonly ChatTurn[],
     schemaGuidance: string,
     settings: ModelSettings
   ): PreparedCompletionRequest {
-    if (!this.isConfigured(settings)) {
-      throw new Error(settings.provider === "custom" && !settings.serviceName.trim()
-        ? "请先在 Wiki Copilot 设置中填写服务名称。"
-        : "请先在 Wiki Copilot 设置中填写模型 endpoint 和模型名称。 ");
-    }
-
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const apiKey = this.getApiKey()?.trim() ?? "";
-    if (providerRequiresApiKey(settings.provider) && !apiKey) {
-      throw new Error("请先在 Wiki Copilot 设置中填写 API Key。");
-    }
-    if (apiKey) {
-      headers.Authorization = `Bearer ${apiKey}`;
-    }
+    const headers = this.requestHeaders(settings);
 
     const messages = [
       { role: "system", content: buildSystemPrompt(schemaGuidance, builtContext.sources.length > 0) },
-      ...historyForModel(history),
+      ...historyForModel(
+        history,
+        ANSWER_HISTORY_MAX_TURNS,
+        ANSWER_HISTORY_MAX_CHARACTERS
+      ),
       {
         role: "user",
         content: [
@@ -275,6 +330,54 @@ export class OpenAICompatibleClient {
         ...completionRequestOptions(settings)
       }
     };
+  }
+
+  private prepareRetrievalPlannerRequest(
+    query: string,
+    settings: ModelSettings,
+    mode: RetrievalPlanningMode,
+    history: readonly ChatTurn[]
+  ): PreparedCompletionRequest {
+    const headers = this.requestHeaders(settings);
+    const providerOptions = completionRequestOptions(settings);
+    return {
+      url: completionUrl(settings.endpoint),
+      headers,
+      body: {
+        model: settings.model,
+        messages: [
+          { role: "system", content: retrievalPlannerPrompt(mode) },
+          ...historyForModel(
+            history,
+            PLANNER_HISTORY_MAX_TURNS,
+            PLANNER_HISTORY_MAX_CHARACTERS
+          ),
+          { role: "user", content: query.trim() }
+        ],
+        ...providerOptions,
+        ...(settings.provider === "deepseek"
+          ? { max_tokens: mode === "fast" ? 240 : 600 }
+          : {})
+      }
+    };
+  }
+
+  private requestHeaders(settings: ModelSettings): Record<string, string> {
+    if (!this.isConfigured(settings)) {
+      throw new Error(settings.provider === "custom" && !settings.serviceName.trim()
+        ? "请先在 Wiki Copilot 设置中填写服务名称。"
+        : "请先在 Wiki Copilot 设置中填写模型 endpoint 和模型名称。 ");
+    }
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const apiKey = this.getApiKey()?.trim() ?? "";
+    if (providerRequiresApiKey(settings.provider) && !apiKey) {
+      throw new Error("请先在 Wiki Copilot 设置中填写 API Key。");
+    }
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+    return headers;
   }
 
   private async answerNonStreaming(

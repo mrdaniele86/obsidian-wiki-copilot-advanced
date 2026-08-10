@@ -1,6 +1,5 @@
-import type { ChatTurn } from "../llm/openai-compatible";
 import { technicalIdentifierTokens, tokenizeForSearch } from "./tokenizer";
-import type { RetrievalResult, RetrievedChunk } from "./types";
+import type { ChatTurn, RetrievalResult, RetrievedChunk } from "./types";
 
 const EXPLICIT_FOLLOW_UP = /^(?:(?:这个|这些|它们?|上述|前面|刚才|之前|继续|接着|再说|那个|那些|那|那么|还有|另外|对应|同样|其中|其它|其他)|(?:this|that|those|it|they|continue|what about|and)\b)/iu;
 const ELLIPTICAL_FOLLOW_UP = /^[^，。！？?]{1,8}呢[？?]?$/u;

@@ -19,7 +19,8 @@ import type { RetrievalResult, SourceReference } from "../core/types";
 import {
   StreamFallbackRequiredError
 } from "../llm/openai-compatible";
-import type { ChatTurn, ModelResponseMode } from "../llm/openai-compatible";
+import type { ChatTurn } from "../core/types";
+import type { ModelResponseMode } from "../llm/openai-compatible";
 import { RequestCancelledError } from "../llm/request-timeout";
 import type WikiCopilotPlugin from "../main";
 import type { IndexStatus } from "../obsidian/index-coordinator";
@@ -41,8 +42,8 @@ const ROLE_LABELS: Readonly<Record<SourceReference["role"], string>> = {
   concept: "Concept",
   summary: "Summary",
   wiki: "Wiki",
-  "stable-source": "稳定原文",
-  "pending-source": "未验收",
+  "stable-source": "原文",
+  "pending-source": "原文",
   other: "普通笔记"
 };
 
@@ -229,9 +230,6 @@ export class WikiCopilotView extends ItemView {
     dot.setAttribute("aria-hidden", "true");
     this.statusEl.createSpan({ text: status.state === "ready" ? "索引就绪" : status.message });
     const profile = this.plugin.indexCoordinator.profile;
-    if (this.plugin.settings.retrieval.includePending) {
-      this.statusEl.createSpan({ cls: "wiki-copilot-pending-chip", text: "包含未验收资料" });
-    }
     if (profile && profile.warnings.length > 0) {
       const warning = this.statusEl.createEl("button", {
         cls: "clickable-icon wiki-copilot-profile-warning",
@@ -567,13 +565,6 @@ export class WikiCopilotView extends ItemView {
   ): void {
     if (sources.length === 0) {
       return;
-    }
-    const hasPending = sources.some((source) => source.evidenceTier === "unverified");
-    if (hasPending) {
-      container.createDiv({
-        cls: "wiki-copilot-unverified-warning",
-        text: "此结果包含 pending / 未验收资料，相关结论不能视为稳定事实。"
-      });
     }
     const details = container.createEl("details", { cls: "wiki-copilot-sources" });
     details.createEl("summary", { text: `来源与检索依据（${sources.length}）` });

@@ -11,6 +11,11 @@ export type KnowledgeRole =
 
 export type EvidenceTier = "navigation" | "synthesis" | "stable" | "unverified";
 
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface KnowledgeProfileConfig {
   schemaFiles: string[];
   indexFiles: string[];

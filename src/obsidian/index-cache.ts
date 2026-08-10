@@ -10,7 +10,7 @@ import type {
 } from "../core/types";
 import type { WikiCopilotSettings } from "../settings";
 
-export const INDEX_CACHE_VERSION = 3;
+export const INDEX_CACHE_VERSION = 4;
 
 export interface FileFingerprint {
   path: string;
@@ -40,7 +40,6 @@ export interface IndexCacheSnapshot {
   files: FileFingerprint[];
   searchIndex: WikiSearchIndexSnapshot;
   sourceCatalog: SourceCatalogDocument[];
-  evidenceReferences: Array<[string, string[]]>;
   linkGraph?: LinkGraphSnapshot;
 }
 
@@ -142,13 +141,6 @@ function isSourceCatalogDocument(value: unknown): value is SourceCatalogDocument
     (value.role === "stable-source" || value.role === "pending-source");
 }
 
-function isEvidenceReference(value: unknown): value is [string, string[]] {
-  return Array.isArray(value) &&
-    value.length === 2 &&
-    typeof value[0] === "string" &&
-    isStringArray(value[1]);
-}
-
 function isLinkDestination(value: unknown): value is [string, number] {
   return Array.isArray(value) &&
     value.length === 2 &&
@@ -183,7 +175,6 @@ export function isIndexCacheSnapshot(
       (!policy.includeSerializedSearchIndex && value.searchIndex.index === null)) ||
     !Array.isArray(value.searchIndex.documents) || !value.searchIndex.documents.every(isSearchDocument) ||
     !Array.isArray(value.sourceCatalog) || !value.sourceCatalog.every(isSourceCatalogDocument) ||
-    !Array.isArray(value.evidenceReferences) || !value.evidenceReferences.every(isEvidenceReference) ||
     (value.linkGraph !== undefined && !isLinkGraphSnapshot(value.linkGraph))) {
     return false;
   }
@@ -204,7 +195,6 @@ export function indexSettingsKey(settings: WikiCopilotSettings): string {
   return JSON.stringify({
     autoDetectProfile: settings.autoDetectProfile,
     profile: settings.profile,
-    includePending: settings.retrieval.includePending,
     includeOtherNotes: settings.retrieval.includeOtherNotes
   });
 }

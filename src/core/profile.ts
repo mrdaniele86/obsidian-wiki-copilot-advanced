@@ -129,7 +129,8 @@ function structuredWikiRoot(parts: string[]): string {
 
 function mergeDetectedSchemaHints(
   base: KnowledgeProfileConfig,
-  schemaContents: Readonly<Record<string, string>>
+  schemaContents: Readonly<Record<string, string>>,
+  markdownPaths: readonly string[]
 ): KnowledgeProfileConfig {
   const wiki = new Set(base.wikiRoots);
   const stable = new Set(base.stableSourceRoots);
@@ -139,6 +140,13 @@ function mergeDetectedSchemaHints(
   for (const content of Object.values(schemaContents)) {
     for (const hint of extractBacktickedPaths(content)) {
       const candidate = hint.path;
+      const candidateExists = /\.md$/iu.test(candidate)
+        ? markdownPaths.some((path) => normalizePath(path).toLocaleLowerCase() ===
+          normalizePath(candidate).toLocaleLowerCase())
+        : markdownPaths.some((path) => pathIsWithin(path, candidate));
+      if (!candidateExists) {
+        continue;
+      }
       const lower = candidate.toLocaleLowerCase();
       if (lower.endsWith("index.md")) {
         indices.add(candidate);
@@ -246,7 +254,7 @@ export function discoverKnowledgeProfile(
     ]),
     excludedRoots: uniquePaths(configured.excludedRoots)
   };
-  profile = mergeDetectedSchemaHints(profile, schemaContents);
+  profile = mergeDetectedSchemaHints(profile, schemaContents, markdownPaths);
 
   const warnings: string[] = [];
   if (profile.schemaFiles.length === 0) {

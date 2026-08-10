@@ -1,8 +1,10 @@
 import { getAllTags, MetadataCache, TFile, Vault } from "obsidian";
 import { CooperativeScheduler, yieldToUi } from "../core/cooperative";
-import { EvidenceReferenceMap } from "../core/evidence-references";
+import {
+  FullMarkdownSearchMatcher,
+  preciseRoleMultiplier
+} from "../core/full-markdown-search";
 import { HybridWikiRetriever } from "../core/hybrid-retriever";
-import type { EvidenceNote } from "../core/hybrid-retriever";
 import {
   isMetadataEventCovered,
   requiresFullProfileRebuild
@@ -24,7 +26,16 @@ import { WikiSearchIndex } from "../core/search-index";
 import { SourceCatalogIndex } from "../core/source-catalog";
 import type { SourceCatalogDocument } from "../core/source-catalog";
 import { technicalIdentifierTokens } from "../core/tokenizer";
-import type { KnowledgeProfile, KnowledgeRole, NoteMetadata } from "../core/types";
+import { DEFAULT_RETRIEVAL_OPTIONS } from "../core/retriever";
+import { RequestCancelledError } from "../llm/request-timeout";
+import type {
+  KnowledgeProfile,
+  KnowledgeRole,
+  NoteMetadata,
+  RetrievalOptions,
+  RetrievalResult,
+  RetrievedChunk
+} from "../core/types";
 import type { WikiCopilotSettings } from "../settings";
 import {
   createFileManifest,
@@ -53,6 +64,15 @@ type LexicalRepairCandidate = {
   role: KnowledgeRole;
   score: number;
   markdown?: string;
+};
+type FullMarkdownFile = {
+  path: string;
+  file?: TFile;
+  metadata: NoteMetadata;
+  metadataText: string;
+};
+type FullMarkdownCandidate = FullMarkdownFile & {
+  score: number;
 };
 
 export interface IndexCoordinatorOptions {
@@ -122,6 +142,12 @@ const LEXICAL_RESCUE_MAX_CONTENT_BYTES = 8 * 1024 * 1024;
 const LEXICAL_RESCUE_RECHECK_MS = 60_000;
 const IDENTIFIER_RESCUE_RECHECK_MS = 60_000;
 
+function throwIfSearchAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new RequestCancelledError();
+  }
+}
+
 function compactHeadings(headings: readonly string[]): string {
   const normalized = headings.map((heading) => heading.trim()).filter(Boolean);
   const joined = normalized.join(" ");
@@ -150,7 +176,6 @@ function compactHeadings(headings: readonly string[]): string {
 export class IndexCoordinator {
   readonly searchIndex: WikiSearchIndex;
   readonly sourceCatalog: SourceCatalogIndex;
-  readonly evidenceReferences: EvidenceReferenceMap;
   readonly linkGraph: LinkGraph;
   readonly retriever: HybridWikiRetriever;
 
@@ -197,15 +222,8 @@ export class IndexCoordinator {
     this.lowMemory = options.lowMemory === true;
     this.searchIndex = new WikiSearchIndex({ compactDocuments: this.lowMemory });
     this.sourceCatalog = new SourceCatalogIndex({ useWorker: !this.lowMemory });
-    this.evidenceReferences = new EvidenceReferenceMap();
     this.linkGraph = new LinkGraph();
-    this.retriever = new HybridWikiRetriever(
-      this.searchIndex,
-      this.linkGraph,
-      this.sourceCatalog,
-      this.evidenceReferences,
-      (paths) => this.loadEvidence(paths)
-    );
+    this.retriever = new HybridWikiRetriever(this.searchIndex, this.linkGraph);
   }
 
   subscribe(listener: StatusListener): () => void {
@@ -242,6 +260,176 @@ export class IndexCoordinator {
       pendingUpdates: this.pendingFiles.size,
       profileRefreshPending: this.profileRefreshPending,
       activePath: activePathStatus
+    };
+  }
+
+  /**
+   * Precise mode deliberately checks the body of every visible, non-excluded
+   * Markdown file. The first pass keeps only lightweight file candidates; only
+   * those candidates are read again and split into sections for final context.
+   */
+  async retrieveAllMarkdown(
+    query: string,
+    searchQueries: readonly string[],
+    overrides: Partial<RetrievalOptions> = {},
+    onProgress?: (message: string) => void,
+    signal?: AbortSignal
+  ): Promise<RetrievalResult> {
+    const profile = this.profile;
+    if (!profile || !query.trim()) {
+      return { query, chunks: [], totalCandidates: 0, truncated: false };
+    }
+    const options: RetrievalOptions = { ...DEFAULT_RETRIEVAL_OPTIONS, ...overrides };
+    const matcher = new FullMarkdownSearchMatcher(query, searchQueries);
+    const filesByPath = new Map<string, FullMarkdownFile>();
+    for (const file of this.vault.getMarkdownFiles()) {
+      const role = classifyKnowledgePath(file.path, profile);
+      if (
+        isExcludedPath(file.path, profile) ||
+        role === "schema" ||
+        (role === "pending-source" && !options.includePending)
+      ) {
+        continue;
+      }
+      filesByPath.set(file.path, {
+        path: file.path,
+        file,
+        metadata: this.noteMetadata(file, role),
+        metadataText: this.fileMetadataSearchText(file)
+      });
+    }
+
+    onProgress?.("正在枚举全部 Markdown…");
+    const folders = [""];
+    const visitedFolders = new Set<string>();
+    const adapterScheduler = new CooperativeScheduler(8, 16);
+    for (let folderIndex = 0; folderIndex < folders.length; folderIndex += 1) {
+      throwIfSearchAborted(signal);
+      const folder = folders[folderIndex];
+      if (folder === undefined || visitedFolders.has(folder)) {
+        continue;
+      }
+      visitedFolders.add(folder);
+      try {
+        const listed = await this.vault.adapter.list(folder);
+        for (const path of listed.files) {
+          if (filesByPath.has(path) || !path.toLocaleLowerCase().endsWith(".md")) {
+            continue;
+          }
+          const role = classifyKnowledgePath(path, profile);
+          if (
+            isExcludedPath(path, profile) ||
+            role === "schema" ||
+            (role === "pending-source" && !options.includePending)
+          ) {
+            continue;
+          }
+          const basename = basenameFromPath(path);
+          filesByPath.set(path, {
+            path,
+            metadata: { path, basename, aliases: [], tags: [], role },
+            metadataText: `${path}\n${basename}`
+          });
+        }
+        for (const child of listed.folders) {
+          if (!isExcludedPath(child, profile)) {
+            folders.push(child);
+          }
+        }
+      } catch (error) {
+        console.warn(`Wiki Copilot: 精准模式无法枚举目录 ${folder || "/"}`, error);
+      }
+      await adapterScheduler.checkpoint();
+    }
+
+    const files = [...filesByPath.values()];
+    const fileCandidates: FullMarkdownCandidate[] = [];
+    const scanScheduler = new CooperativeScheduler(8, 4);
+
+    onProgress?.("正在扫描全部 Markdown…");
+    for (let index = 0; index < files.length; index += 1) {
+      throwIfSearchAborted(signal);
+      const entry = files[index];
+      if (!entry) {
+        continue;
+      }
+      try {
+        const markdown = entry.file
+          ? await this.vault.cachedRead(entry.file)
+          : await this.vault.adapter.read(entry.path);
+        const relevance = matcher.scoreFile(entry.metadataText, markdown);
+        if (relevance !== null) {
+          fileCandidates.push({
+            ...entry,
+            score: relevance * preciseRoleMultiplier(entry.metadata.role)
+          });
+        }
+      } catch (error) {
+        console.warn(`Wiki Copilot: 精准模式无法读取 ${entry.path}`, error);
+      }
+      await scanScheduler.checkpoint();
+    }
+
+    fileCandidates.sort((left, right) =>
+      right.score - left.score || left.path.localeCompare(right.path));
+    const maxPages = options.maxRetrievedPages;
+    const candidateLimit = Math.min(
+      fileCandidates.length,
+      Math.max(64, Math.min(144, maxPages * 4))
+    );
+    const candidates = fileCandidates.slice(0, candidateLimit);
+    const rankedChunks: RetrievedChunk[] = [];
+    const chunkScheduler = new CooperativeScheduler(8, 4);
+
+    onProgress?.("正在提取相关段落…");
+    for (let index = 0; index < candidates.length; index += 1) {
+      throwIfSearchAborted(signal);
+      const candidate = candidates[index];
+      if (!candidate) {
+        continue;
+      }
+      try {
+        const markdown = candidate.file
+          ? await this.vault.cachedRead(candidate.file)
+          : await this.vault.adapter.read(candidate.path);
+        rankedChunks.push(...matcher.chunksForNote(
+          candidate.metadata,
+          markdown,
+          candidate.score,
+          2
+        ));
+      } catch (error) {
+        console.warn(`Wiki Copilot: 精准模式无法提取 ${candidate.path}`, error);
+      }
+      await chunkScheduler.checkpoint();
+    }
+
+    rankedChunks.sort((left, right) =>
+      right.score - left.score || left.path.localeCompare(right.path) ||
+      left.chunkIndex - right.chunkIndex);
+    const selected: RetrievedChunk[] = [];
+    const selectedPaths = new Set<string>();
+    const chunksPerPath = new Map<string, number>();
+    let characters = 0;
+    for (const chunk of rankedChunks) {
+      const pathCount = chunksPerPath.get(chunk.path) ?? 0;
+      if (pathCount >= 2 || (!selectedPaths.has(chunk.path) && selectedPaths.size >= maxPages)) {
+        continue;
+      }
+      if (selected.length > 0 && characters + chunk.text.length > options.maxContextCharacters) {
+        continue;
+      }
+      selected.push(chunk);
+      selectedPaths.add(chunk.path);
+      chunksPerPath.set(chunk.path, pathCount + 1);
+      characters += chunk.text.length;
+    }
+
+    return {
+      query,
+      chunks: selected,
+      totalCandidates: rankedChunks.length,
+      truncated: fileCandidates.length > candidateLimit || selected.length < rankedChunks.length
     };
   }
 
@@ -364,7 +552,7 @@ export class IndexCoordinator {
         }
         try {
           const markdown = await this.vault.adapter.read(path);
-          await this.updateAdapterMarkdown(path, markdown, role, profile, settings);
+          await this.updateAdapterMarkdown(path, markdown, role, settings);
           repairedPaths.add(path);
           repaired += 1;
         } catch (error) {
@@ -682,14 +870,11 @@ export class IndexCoordinator {
       if (generation !== this.generation) {
         return;
       }
-      this.evidenceReferences.restoreSnapshot(snapshot.evidenceReferences);
-      snapshot.evidenceReferences.length = 0;
       if (snapshot.linkGraph) {
         this.linkGraph.restoreSnapshot(snapshot.linkGraph);
         snapshot.linkGraph.length = 0;
         linkGraphRestored = true;
       }
-      this.retriever.clearEvidenceCache();
     } catch (error) {
       console.warn("Wiki Copilot: 恢复本地索引缓存失败，将重新构建。", error);
       if (generation === this.generation) {
@@ -826,8 +1011,6 @@ export class IndexCoordinator {
         .slice(0, 8_000);
       this.searchIndex.clear();
       await this.sourceCatalog.clearAsync();
-      this.evidenceReferences.clear();
-      this.retriever.clearEvidenceCache();
 
       const classified: { file: TFile; role: KnowledgeRole }[] = [];
       const classificationScheduler = new CooperativeScheduler();
@@ -841,7 +1024,7 @@ export class IndexCoordinator {
         }
       }
       const catalogFiles = classified.filter(({ role }) =>
-        role === "stable-source" || (role === "pending-source" && settings.retrieval.includePending)
+        role === "stable-source" || role === "pending-source"
       );
       const primaryFiles = classified
         .filter(({ role }) =>
@@ -899,7 +1082,7 @@ export class IndexCoordinator {
         if (generation !== this.generation) {
           return;
         }
-        await this.indexPrimaryFile(file, role, profile, settings);
+        await this.indexPrimaryFile(file, role);
         processedFiles += 1;
         wikiProcessedFiles += 1;
         this.emit({
@@ -1035,22 +1218,10 @@ export class IndexCoordinator {
   private async indexPrimaryFile(
     file: TFile,
     role: KnowledgeRole,
-    profile: KnowledgeProfile,
-    settings: WikiCopilotSettings,
     knownMarkdown?: string
   ): Promise<void> {
     const content = knownMarkdown ?? await this.vault.cachedRead(file);
     await this.searchIndex.replaceNoteAsync(this.noteMetadata(file, role), content);
-    const sourceRoots = [
-      ...profile.stableSourceRoots,
-      ...(settings.retrieval.includePending ? profile.pendingSourceRoots : [])
-    ];
-    this.evidenceReferences.replace(
-      file.path,
-      content,
-      sourceRoots,
-      (path) => this.sourceCatalog.hasPath(path)
-    );
   }
 
   private async updateFile(
@@ -1064,7 +1235,7 @@ export class IndexCoordinator {
       return "skipped";
     }
     const role = classifyKnowledgePath(file.path, profile);
-    if (role === "stable-source" || (role === "pending-source" && settings.retrieval.includePending)) {
+    if (role === "stable-source" || role === "pending-source") {
       const document = this.catalogDocument(file, role);
       if (document) {
         await this.sourceCatalog.replaceAsync(document);
@@ -1072,7 +1243,7 @@ export class IndexCoordinator {
       return "catalog";
     }
     if (this.isPrimaryRole(role, settings)) {
-      await this.indexPrimaryFile(file, role, profile, settings, knownMarkdown);
+      await this.indexPrimaryFile(file, role, knownMarkdown);
       return "primary";
     }
     return "skipped";
@@ -1081,55 +1252,13 @@ export class IndexCoordinator {
   private removePath(path: string): void {
     this.searchIndex.removePath(path);
     this.sourceCatalog.remove(path);
-    this.evidenceReferences.remove(path);
-    this.retriever.removeEvidencePath(path);
     this.indexedFileMtimes.delete(path);
-  }
-
-  private async loadEvidence(paths: string[]): Promise<EvidenceNote[]> {
-    const profile = this.profile;
-    if (!profile) {
-      return [];
-    }
-    const includePending = this.getSettings().retrieval.includePending;
-    const notes: EvidenceNote[] = [];
-    for (const path of paths) {
-      const abstractFile = this.vault.getAbstractFileByPath(path);
-      const role = classifyKnowledgePath(path, profile);
-      if (role !== "stable-source" && !(includePending && role === "pending-source")) {
-        continue;
-      }
-      if (abstractFile instanceof TFile && abstractFile.extension.toLocaleLowerCase() === "md") {
-        notes.push({
-          metadata: this.noteMetadata(abstractFile, role),
-          markdown: await this.vault.cachedRead(abstractFile)
-        });
-      } else {
-        try {
-          notes.push({
-            metadata: {
-              path,
-              basename: basenameFromPath(path),
-              aliases: [],
-              tags: [],
-              role
-            },
-            markdown: await this.vault.adapter.read(path)
-          });
-        } catch (error) {
-          console.warn(`Wiki Copilot: 无法读取设备原文 ${path}`, error);
-        }
-      }
-      await yieldToUi();
-    }
-    return notes;
   }
 
   private async updateAdapterMarkdown(
     path: string,
     markdown: string,
     role: KnowledgeRole,
-    profile: KnowledgeProfile,
     settings: WikiCopilotSettings
   ): Promise<void> {
     this.removePath(path);
@@ -1155,16 +1284,6 @@ export class IndexCoordinator {
       tags: [],
       role
     }, markdown);
-    const sourceRoots = [
-      ...profile.stableSourceRoots,
-      ...(settings.retrieval.includePending ? profile.pendingSourceRoots : [])
-    ];
-    this.evidenceReferences.replace(
-      path,
-      markdown,
-      sourceRoots,
-      (candidatePath) => this.sourceCatalog.hasPath(candidatePath)
-    );
   }
 
   private async discoverAdapterLexicalPaths(
@@ -1374,8 +1493,7 @@ export class IndexCoordinator {
       searchIndex: this.searchIndex.createSnapshot({
         includeSerializedIndex: snapshotPolicy.includeSerializedSearchIndex
       }),
-      sourceCatalog: this.sourceCatalog.createSnapshot(),
-      evidenceReferences: this.evidenceReferences.createSnapshot()
+      sourceCatalog: this.sourceCatalog.createSnapshot()
     };
     if (snapshotPolicy.includeLinkGraph) {
       snapshot.linkGraph = this.linkGraph.createSnapshot();

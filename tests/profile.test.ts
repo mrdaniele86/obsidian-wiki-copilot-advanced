@@ -69,6 +69,31 @@ describe("knowledge profile", () => {
     expect(profile.pendingSourceRoots).not.toContain("raw");
   });
 
+  it("ignores example commands and labels that do not resolve to Vault paths", () => {
+    const profile = discoverKnowledgeProfile([
+      "AGENTS.md",
+      "wiki/topics/Test.md",
+      "raw/processed/md/source.md",
+      "raw/pending/md/draft.md"
+    ], {
+      "AGENTS.md": [
+        "知识层位于 `wiki/`。",
+        "稳定来源位于 `raw/processed/`，待处理来源位于 `raw/pending/`。",
+        "稳定来源可用 `scripts/reprocess_pdf_markdown_collection.py` 处理。",
+        "输出 Markdown 时清理 `NaN`，命令可带 `--force`，再写入 `md/`。"
+      ].join("\n")
+    });
+
+    expect(profile.wikiRoots).toContain("wiki");
+    expect(profile.stableSourceRoots).toContain("raw/processed");
+    expect(profile.pendingSourceRoots).toContain("raw/pending");
+    for (const bogusRoot of ["scripts", "md", "NaN"]) {
+      expect(profile.wikiRoots).not.toContain(bogusRoot);
+      expect(profile.stableSourceRoots).not.toContain(bogusRoot);
+      expect(profile.pendingSourceRoots).not.toContain(bogusRoot);
+    }
+  });
+
   it("extracts only the Query section for model guidance", () => {
     const guidance = extractQueryGuidance(`# Schema
 

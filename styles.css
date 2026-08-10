@@ -41,7 +41,10 @@
   font-size: var(--font-ui-smaller);
 }
 
-.wiki-copilot-pending-chip,
+.setting-item.wiki-copilot-settings-intro {
+  padding-block: var(--size-4-3);
+}
+
 .wiki-copilot-role,
 .wiki-copilot-origin {
   display: inline-flex;
@@ -51,12 +54,6 @@
   border-radius: var(--radius-s);
   font-size: var(--font-ui-smaller);
   line-height: 1.2;
-}
-
-.wiki-copilot-pending-chip,
-.wiki-copilot-role.is-pending-source {
-  color: var(--text-warning);
-  background: color-mix(in srgb, var(--color-orange) 14%, transparent);
 }
 
 .wiki-copilot-header-actions,
@@ -392,15 +389,6 @@
   border-top-color: var(--interactive-accent);
   border-radius: 50%;
   animation: wiki-copilot-spin 0.8s linear infinite;
-}
-
-.wiki-copilot-unverified-warning {
-  margin-top: var(--size-4-2);
-  padding: var(--size-4-2);
-  border-left: 3px solid var(--color-orange);
-  color: var(--text-warning);
-  background: color-mix(in srgb, var(--color-orange) 9%, transparent);
-  font-size: var(--font-ui-small);
 }
 
 .wiki-copilot-sources {

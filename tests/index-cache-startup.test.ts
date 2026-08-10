@@ -49,6 +49,7 @@ const profile: KnowledgeProfile = {
 const settings: WikiCopilotSettings = {
   autoDetectProfile: true,
   profile,
+  retrievalMode: "fast",
   retrievalRange: "medium",
   retrieval: {
     includePending: false,
@@ -105,7 +106,6 @@ describe("cached index startup", () => {
         headings: "功耗",
         role: "stable-source"
       }],
-      evidenceReferences: [],
       linkGraph: [[files[0]!.path, [[files[1]!.path, 1]]]]
     };
     const repository: IndexCacheRepository = {
@@ -167,7 +167,6 @@ describe("cached index startup", () => {
       files: createFileManifest(files),
       searchIndex: searchIndex.createSnapshot(),
       sourceCatalog: [],
-      evidenceReferences: [],
       linkGraph: []
     };
     const repository: IndexCacheRepository = {
@@ -221,7 +220,6 @@ describe("cached index startup", () => {
       searchIndex: new WikiSearchIndex({ compactDocuments: true })
         .createSnapshot({ includeSerializedIndex: false }),
       sourceCatalog: [],
-      evidenceReferences: [],
       linkGraph: []
     };
     const repository: IndexCacheRepository = {
@@ -277,7 +275,6 @@ describe("cached index startup", () => {
       searchIndex: new WikiSearchIndex({ compactDocuments: true })
         .createSnapshot({ includeSerializedIndex: false }),
       sourceCatalog: [],
-      evidenceReferences: [],
       linkGraph: []
     };
     const repository: IndexCacheRepository = {
@@ -343,7 +340,6 @@ describe("cached index startup", () => {
       files: createFileManifest(visibleFiles),
       searchIndex: searchIndex.createSnapshot({ includeSerializedIndex: false }),
       sourceCatalog: [],
-      evidenceReferences: [],
       linkGraph: []
     };
     const repository: IndexCacheRepository = {
@@ -352,9 +348,17 @@ describe("cached index startup", () => {
       save: vi.fn(async () => undefined)
     };
     const adapter = {
-      list: vi.fn(async (path: string) => path === "raw/processed"
-        ? { files: [sourcePath], folders: [] }
-        : { files: [], folders: [] }),
+      list: vi.fn(async (path: string) => {
+        if (path === "") {
+          return { files: [], folders: ["raw"] };
+        }
+        if (path === "raw") {
+          return { files: [], folders: ["raw/processed"] };
+        }
+        return path === "raw/processed"
+          ? { files: [sourcePath], folders: [] }
+          : { files: [], folders: [] };
+      }),
       read: vi.fn(async (path: string) => path === sourcePath
         ? "# MS6-V-WT-H\n\n最大功耗为 0.8W。"
         : "")
@@ -373,15 +377,26 @@ describe("cached index startup", () => {
     );
 
     try {
+      const progressMessages: string[] = [];
       await coordinator.initialize();
       const repaired = await coordinator.repairTechnicalIdentifierCoverage("所有ms6功耗");
-      const result = await coordinator.retriever.retrieve("所有ms6功耗", settings.retrieval);
+      const fastResult = await coordinator.retriever.retrieve("所有ms6功耗", settings.retrieval);
+      const preciseResult = await coordinator.retrieveAllMarkdown(
+        "所有ms6功耗",
+        ["所有ms6功耗", "MS6 power consumption"],
+        { ...settings.retrieval, includePending: true },
+        (message) => progressMessages.push(message)
+      );
 
       expect(repaired).toBe(1);
-      expect(result.chunks).toHaveLength(1);
-      expect(result.chunks[0]?.path).toBe(sourcePath);
-      expect(result.chunks[0]?.text).toContain("0.8W");
+      expect(fastResult.chunks).toHaveLength(0);
+      expect(preciseResult.chunks).toHaveLength(1);
+      expect(preciseResult.chunks[0]?.path).toBe(sourcePath);
+      expect(preciseResult.chunks[0]?.text).toContain("0.8W");
       expect(adapter.list).toHaveBeenCalledWith("raw/processed");
+      expect(progressMessages).toContain("正在扫描全部 Markdown…");
+      expect(progressMessages).toContain("正在提取相关段落…");
+      expect(progressMessages.some((message) => /\d+\/\d+/u.test(message))).toBe(false);
     } finally {
       coordinator.destroy();
       vi.unstubAllGlobals();
@@ -406,8 +421,7 @@ describe("cached index startup", () => {
       queryGuidance: "",
       files: createFileManifest(files),
       searchIndex: new WikiSearchIndex().createSnapshot(),
-      sourceCatalog: [],
-      evidenceReferences: []
+      sourceCatalog: []
     };
     const repository: IndexCacheRepository = {
       load: vi.fn(async () => snapshot),
@@ -521,7 +535,6 @@ describe("cached index startup", () => {
       files: createFileManifest(cachedFiles),
       searchIndex: searchIndex.createSnapshot({ includeSerializedIndex: false }),
       sourceCatalog: [],
-      evidenceReferences: [],
       linkGraph: []
     };
     const repository: IndexCacheRepository = {
@@ -589,7 +602,6 @@ describe("cached index startup", () => {
       files: createFileManifest(files),
       searchIndex: searchIndex.createSnapshot(),
       sourceCatalog: [],
-      evidenceReferences: [],
       linkGraph: []
     };
     const repository: IndexCacheRepository = {
@@ -656,7 +668,6 @@ describe("cached index startup", () => {
       files: createFileManifest(cachedFiles),
       searchIndex: emptyIndex.createSnapshot(),
       sourceCatalog: [],
-      evidenceReferences: [],
       linkGraph: []
     };
     const repository: IndexCacheRepository = {

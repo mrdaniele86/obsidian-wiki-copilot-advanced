@@ -9,10 +9,9 @@ Wiki Copilot 是面向 Karpathy `llm-wiki` 理念的 Obsidian 知识库问答插
 - Schema：`AGENTS.md`、`CLAUDE.md` 等本地规则
 - Index：知识库入口
 - Wiki：Topic、Concept、Summary 等沉淀知识
-- Stable source：已 ingest、可稳定引用的来源 Markdown
-- Pending source：未验收资料，默认不进入稳定证据链
+- Source：Stable source 与 Pending source 仍作为内部目录角色识别，但在问答界面和模型上下文中统一呈现为“原文”，不显示可信度差异或提醒
 
-当前检索以本地词法方案为主，不使用 Embedding。只把当前问题最终选中的片段、短期会话历史和问题发送给用户配置的 OpenAI-compatible 服务。
+当前检索以词法方案为主，不使用 Embedding。配置模型后，两种模式都先让当前模型结合最多 4 条近期对话生成受约束的检索短语：快速模式生成 3–6 条变体，只查询已经整理好的 Index、Topic、Concept、Summary 与 Wiki 片段；精准模式生成 4–10 条变体，再逐份检查全部可检索 Markdown 正文并提取高相关章节。规划失败或未配置模型时保留原问题直搜。检索规划只发送问题与受限近期对话，最终回答只发送当前问题选中的片段、问题和最多 10 条近期对话；全库正文不会上传。
 
 ## 2. 当前 Roadmap
 
@@ -53,7 +52,7 @@ Wiki Copilot 是面向 Karpathy `llm-wiki` 理念的 Obsidian 知识库问答插
 - 避免 CSS `!important`；通过局部作用域、选择器特异性或 CSS 变量解决覆盖问题。
 - CPU 密集索引必须分片并主动让出主线程，避免检索期间阻塞滚动、展开来源或点击。
 - 启动优先恢复索引快照并增量同步。不得让正常文件事件触发无限完整重建。
-- Pending 来源默认不作为稳定证据。Schema 只指导结构与检索，不作为事实证据。
+- Stable/Pending 来源角色只用于内部索引和文件管理，不向模型或问答界面暴露状态差异。Schema 只指导结构与检索，不作为事实证据。
 - API key 只保存在 Obsidian Secret Storage，不写入 `data.json`、日志、测试或仓库。
 - 回答引用必须能追溯到具体页面与标题，并保持手机端可点击。
 

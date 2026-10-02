@@ -138,7 +138,7 @@ describe("settings presentation", () => {
       getApiKey: () => null
     };
     const tab = new WikiCopilotSettingTab({} as never, plugin as never);
-    const intro = tab.getSettingDefinitions()[0] as {
+    const intro = tab.getSettingDefinitions().find((definition) => definition.name === "Wiki Copilot") as {
       render: (setting: unknown, group: unknown) => void;
     };
     const setting = {

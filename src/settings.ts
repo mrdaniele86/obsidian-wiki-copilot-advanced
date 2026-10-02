@@ -145,6 +145,7 @@ export function legacyApiKeySecretName(data: unknown): string {
 }
 
 type WikiCopilotSettingKey =
+  | "language"
   | "provider"
   | "serviceName"
   | "endpoint"
@@ -167,6 +168,15 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
     }
 
     return [
+      {
+        type: "group",
+        heading: "Interface",
+        items: [{
+          name: "Interface language",
+          desc: "Choose Auto, Italian, English, or Chinese.",
+          control: { type: "dropdown", key: "language", options: { auto: "Auto", it: "Italiano", en: "English", zh: "中文" } }
+        }]
+      },
       {
         name: "Wiki Copilot",
         desc: "面向 LLM Wiki 的知识库问答插件，支持精准检索与来源引用。",
@@ -278,6 +288,7 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
 
   override getControlValue(key: WikiCopilotSettingKey): unknown {
     switch (key) {
+      case "language": return this.plugin.settings.language;
       case "provider":
         return this.plugin.settings.model.provider;
       case "serviceName":
@@ -293,6 +304,10 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
 
   override async setControlValue(key: WikiCopilotSettingKey, value: unknown): Promise<void> {
     switch (key) {
+      case "language":
+        if (!isUiLanguage(value)) return;
+        this.plugin.settings.language = value;
+        break;
       case "provider":
         if (!isModelProvider(value)) {
           return;

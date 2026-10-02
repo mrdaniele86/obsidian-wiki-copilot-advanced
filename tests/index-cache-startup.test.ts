@@ -48,6 +48,7 @@ const profile: KnowledgeProfile = {
 
 const settings: WikiCopilotSettings = {
   language: "auto",
+  conversationFolder: "Memory Copilot/Conversations",
   autoDetectProfile: true,
   profile,
   retrievalMode: "fast",

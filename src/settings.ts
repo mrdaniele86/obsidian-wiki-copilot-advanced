@@ -29,6 +29,7 @@ export interface ModelSettings {
 
 export interface WikiCopilotSettings {
   language: UiLanguage;
+  conversationFolder: string;
   autoDetectProfile: boolean;
   profile: KnowledgeProfileConfig;
   retrievalMode: RetrievalMode;
@@ -40,6 +41,7 @@ export interface WikiCopilotSettings {
 
 export const DEFAULT_SETTINGS: WikiCopilotSettings = {
   language: "auto",
+  conversationFolder: "Memory Copilot/Conversations",
   autoDetectProfile: true,
   profile: {
     ...DEFAULT_PROFILE_CONFIG,
@@ -93,6 +95,9 @@ function stringArray(value: unknown, fallback: string[]): string[] {
 export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
   const raw = data && typeof data === "object" ? data as Partial<WikiCopilotSettings> : {};
   const language = isUiLanguage(raw.language) ? raw.language : DEFAULT_SETTINGS.language;
+  const conversationFolder = typeof raw.conversationFolder === "string" && raw.conversationFolder.trim()
+    ? raw.conversationFolder.trim()
+    : DEFAULT_SETTINGS.conversationFolder;
   const rawProfile: Partial<KnowledgeProfileConfig> = raw.profile && typeof raw.profile === "object" ? raw.profile : {};
   const rawModel: Partial<ModelSettings> = raw.model && typeof raw.model === "object" ? raw.model : {};
   const savedEndpoint = typeof rawModel.endpoint === "string" ? rawModel.endpoint.trim() : "";
@@ -110,6 +115,7 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
 
   return {
     language,
+    conversationFolder,
     autoDetectProfile: true,
     profile: {
       schemaFiles: stringArray(rawProfile.schemaFiles, DEFAULT_SETTINGS.profile.schemaFiles),
@@ -146,6 +152,7 @@ export function legacyApiKeySecretName(data: unknown): string {
 
 type WikiCopilotSettingKey =
   | "language"
+  | "conversationFolder"
   | "provider"
   | "serviceName"
   | "endpoint"
@@ -179,6 +186,15 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
             auto: t("language.auto"), it: t("language.it"),
             en: t("language.en"), zh: t("language.zh")
           } }
+        }]
+      },
+      {
+        type: "group",
+        heading: t("settings.conversation.heading"),
+        items: [{
+          name: t("settings.conversation.folder.name"),
+          desc: t("settings.conversation.folder.desc"),
+          control: { type: "text", key: "conversationFolder", placeholder: DEFAULT_SETTINGS.conversationFolder }
         }]
       },
       {
@@ -285,6 +301,7 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
   override getControlValue(key: WikiCopilotSettingKey): unknown {
     switch (key) {
       case "language": return this.plugin.settings.language;
+      case "conversationFolder": return this.plugin.settings.conversationFolder;
       case "provider":
         return this.plugin.settings.model.provider;
       case "serviceName":
@@ -303,6 +320,10 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
       case "language":
         if (!isUiLanguage(value)) return;
         this.plugin.settings.language = value;
+        break;
+      case "conversationFolder":
+        if (typeof value !== "string" || !value.trim()) return;
+        this.plugin.settings.conversationFolder = value.trim();
         break;
       case "provider":
         if (!isModelProvider(value)) {

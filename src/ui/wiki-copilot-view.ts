@@ -21,6 +21,8 @@ import {
 } from "../llm/openai-compatible";
 import { localizeModelError } from "./model-response-localization";
 import type { ChatTurn } from "../core/types";
+import { assistantRenderState } from "../chat/conversation-types";
+import type { Conversation } from "../chat/conversation-types";
 import type { ModelResponseMode } from "../llm/openai-compatible";
 import { RequestCancelledError } from "../llm/request-timeout";
 import type WikiCopilotPlugin from "../main";
@@ -52,7 +54,9 @@ export class WikiCopilotView extends ItemView {
   private statusEl!: HTMLElement;
   private queryEl!: HTMLTextAreaElement;
   private askButton!: HTMLButtonElement;
+  private historyEl!: HTMLElement;
   private turns: ChatTurn[] = [];
+  private conversation: Conversation | null = null;
   private unsubscribeStatus: (() => void) | null = null;
   private conversationComponent: Component | null = null;
   private activeRequest: AbortController | null = null;
@@ -101,6 +105,12 @@ export class WikiCopilotView extends ItemView {
 
   focusInput(): void {
     this.queryEl?.focus();
+  }
+
+  setProtocolQuery(query: string, send = false): void {
+    this.queryEl.value = query;
+    this.scheduleComposerResize();
+    if (send) void this.ask();
   }
 
   refreshConfigurationState(): void {
@@ -183,7 +193,10 @@ export class WikiCopilotView extends ItemView {
       attr: { "aria-label": this.plugin.t("view.newConversation") }
     });
     setIcon(clear, "square-pen");
-    this.registerDomEvent(clear, "click", () => this.clearConversation());
+    this.registerDomEvent(clear, "click", () => this.startNewConversation());
+
+    this.historyEl = container.createDiv({ cls: "wiki-copilot-history" });
+    void this.renderConversationHistory();
 
     this.chatEl = container.createDiv({ cls: "wiki-copilot-chat" });
     this.registerDomEvent(this.chatEl, "pointerdown", (event) => {
@@ -276,17 +289,89 @@ export class WikiCopilotView extends ItemView {
     }
   }
 
-  private clearConversation(): void {
+  private startNewConversation(): void {
     this.activeRequest?.abort();
     this.activeRequest = null;
     this.requestSequence += 1;
     this.turns = [];
+    this.conversation = null;
     this.resetConversationComponent();
     this.chatEl.empty();
     this.renderWelcome();
     this.queryEl.value = "";
     this.resetComposerHeight();
     this.setBusy(false);
+  }
+
+  private async renderConversationHistory(): Promise<void> {
+    if (!this.historyEl) return;
+    this.historyEl.empty();
+    const history = this.historyEl.createEl("details");
+    history.createEl("summary", { text: this.plugin.t("view.history") });
+    try {
+      const conversations = await this.plugin.conversations.list(this.plugin.settings.conversationFolder);
+      if (conversations.length === 0) {
+        history.createDiv({ cls: "wiki-copilot-history-empty", text: this.plugin.t("view.historyEmpty") });
+        return;
+      }
+      const list = history.createDiv({ cls: "wiki-copilot-history-list" });
+      for (const stored of conversations) {
+        const button = list.createEl("button", {
+          cls: "wiki-copilot-history-item",
+          text: stored.conversation.title,
+          attr: { "aria-label": this.plugin.t("view.openConversation", { title: stored.conversation.title }) }
+        });
+        this.registerDomEvent(button, "click", () => void this.openConversation(stored.path));
+      }
+    } catch (error) {
+      console.error("Wiki Copilot: failed to list conversations.", error);
+      history.createDiv({ cls: "wiki-copilot-history-error", text: this.plugin.t("view.historyLoadFailed") });
+    }
+  }
+
+  private async openConversation(path: string): Promise<void> {
+    try {
+      const conversation = await this.plugin.conversations.load(path);
+      if (!conversation) {
+        new Notice(this.plugin.t("view.historyLoadFailed"));
+        return;
+      }
+      this.activeRequest?.abort();
+      this.activeRequest = null;
+      this.requestSequence += 1;
+      this.conversation = conversation;
+      this.turns = conversation.turns.map((turn) => ({ ...turn }));
+      this.renderConversationTurns();
+    } catch (error) {
+      console.error("Wiki Copilot: failed to open conversation.", error);
+      new Notice(this.plugin.t("view.historyLoadFailed"));
+    }
+  }
+
+  private renderConversationTurns(): void {
+    this.resetConversationComponent();
+    this.chatEl.empty();
+    for (const turn of this.conversation?.turns ?? []) {
+      if (turn.role === "user") this.appendUserMessage(turn.content);
+      else {
+        const state = assistantRenderState(turn);
+        void this.appendAssistantMessage(turn.content, state.sources, state.knowledgeBaseHit);
+      }
+    }
+    this.queryEl.value = "";
+    this.resetComposerHeight();
+    this.setBusy(false);
+  }
+
+  private async saveConversation(): Promise<void> {
+    if (!this.conversation?.turns.length) return;
+    try {
+      await this.plugin.conversations.save(this.plugin.settings.conversationFolder, this.conversation);
+      void this.renderConversationHistory();
+    } catch (error) {
+      console.error("Wiki Copilot: failed to save conversation.", error);
+      new Notice(this.plugin.t("view.historySaveFailed"));
+    }
   }
 
   private async ask(): Promise<void> {
@@ -422,6 +507,23 @@ export class WikiCopilotView extends ItemView {
         );
       }
       this.turns.push({ role: "assistant", content: answer.markdown });
+      const now = new Date().toISOString();
+      this.conversation ??= {
+        id: this.newConversationId(),
+        createdAt: now,
+        updatedAt: now,
+        title: question.slice(0, 80),
+        turns: []
+      };
+      this.conversation.turns.push({ role: "user", content: question });
+      this.conversation.turns.push({
+        role: "assistant",
+        content: answer.markdown,
+        sources: answer.sources,
+        knowledgeBaseHit: answer.knowledgeBaseHit
+      });
+      this.conversation.updatedAt = now;
+      await this.saveConversation();
     } catch (error) {
       if (sequence === this.requestSequence) {
         const lastTurn = this.turns.at(-1);
@@ -968,6 +1070,12 @@ export class WikiCopilotView extends ItemView {
 
   private yieldToPaint(): Promise<void> {
     return yieldToUi(this.viewWindow());
+  }
+
+  private newConversationId(): string {
+    return typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
   private roleLabel(role: SourceReference["role"]): string {

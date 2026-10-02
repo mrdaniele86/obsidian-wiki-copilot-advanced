@@ -53,6 +53,7 @@ import { createTranslator, resolveUiLanguage } from "./i18n";
 import type { TranslationKey, TranslationVariables } from "./i18n";
 import { ReusableLeafController } from "./ui/temporary-leaf-controller";
 import { planMobileRootView } from "./ui/view-leaf-placement";
+import { ConversationStore } from "./chat/conversation-store";
 import { WikiCopilotView, WIKI_COPILOT_VIEW_TYPE } from "./ui/wiki-copilot-view";
 import type { IndexStatus } from "./obsidian/index-coordinator";
 import type { RetrievalProgressStage } from "./core/retrieval-progress";
@@ -77,6 +78,7 @@ export interface AnswerOptions {
 export default class WikiCopilotPlugin extends Plugin {
   override settings: WikiCopilotSettings = DEFAULT_SETTINGS;
   indexCoordinator!: IndexCoordinator;
+  conversations!: ConversationStore;
 
   private llmClient!: OpenAICompatibleClient;
   private manualRebuildPromise: Promise<void> | null = null;
@@ -148,6 +150,7 @@ export default class WikiCopilotPlugin extends Plugin {
       cacheRepository,
       { lowMemory: Platform.isMobile }
     );
+    this.conversations = new ConversationStore(this.app.vault);
     this.llmClient = new OpenAICompatibleClient(() => this.getApiKey());
 
     this.registerView(

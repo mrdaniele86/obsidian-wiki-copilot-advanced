@@ -1,8 +1,29 @@
 export type ConversationRole = "user" | "assistant";
 
-export interface ConversationTurn {
-  role: ConversationRole;
+import type { SourceReference } from "../core/types";
+
+export interface UserConversationTurn {
+  role: "user";
   content: string;
+}
+
+export interface AssistantConversationTurn {
+  role: "assistant";
+  content: string;
+  sources?: SourceReference[];
+  knowledgeBaseHit?: boolean;
+}
+
+export type ConversationTurn = UserConversationTurn | AssistantConversationTurn;
+
+export function assistantRenderState(turn: AssistantConversationTurn): {
+  sources: SourceReference[];
+  knowledgeBaseHit: boolean;
+} {
+  return {
+    sources: turn.sources ?? [],
+    knowledgeBaseHit: turn.knowledgeBaseHit ?? true
+  };
 }
 
 export interface Conversation {

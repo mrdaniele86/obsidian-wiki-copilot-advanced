@@ -14,7 +14,7 @@ interface VaultFolderLike {
 type VaultEntryLike = VaultFileLike | VaultFolderLike;
 
 interface ConversationVault {
-  createFolder(path: string): Promise<void>;
+  createFolder(path: string): Promise<unknown>;
   create(path: string, content: string): Promise<VaultFileLike>;
   modify(file: VaultFileLike, content: string): Promise<void>;
   cachedRead(file: VaultFileLike): Promise<string>;

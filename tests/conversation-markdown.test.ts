@@ -9,7 +9,15 @@ const conversation: Conversation = {
   title: "How do I use YAML: safely?",
   turns: [
     { role: "user", content: "How do I use YAML: safely?" },
-    { role: "assistant", content: "Use quoted values.\n\nThey preserve punctuation." },
+    {
+      role: "assistant",
+      content: "Use quoted values.\n\nThey preserve punctuation.",
+      sources: [{
+        id: "1", path: "Wiki/YAML.md", title: "YAML", heading: "Quoting",
+        role: "wiki", evidenceTier: "synthesis", score: 0.91, origin: "lexical"
+      }],
+      knowledgeBaseHit: false
+    },
     { role: "user", content: "Thanks." }
   ]
 };
@@ -34,6 +42,15 @@ describe("conversation Markdown", () => {
     };
 
     expect(parseConversation(serializeConversation(preciseConversation))).toEqual(preciseConversation);
+  });
+
+  it("keeps legacy turns readable when assistant rendering state is absent", () => {
+    const legacy = serializeConversation({
+      ...conversation,
+      turns: [{ role: "user", content: "Question" }, { role: "assistant", content: "Answer" }]
+    });
+
+    expect(parseConversation(legacy)?.turns[1]).toEqual({ role: "assistant", content: "Answer" });
   });
 
   it("does not treat ordinary notes or malformed conversation notes as conversations", () => {

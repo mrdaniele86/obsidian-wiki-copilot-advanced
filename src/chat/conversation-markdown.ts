@@ -1,4 +1,4 @@
-import type { Conversation, ConversationRole, ConversationTurn } from "./conversation-types";
+import type { AssistantConversationTurn, Conversation, ConversationRole, ConversationTurn } from "./conversation-types";
 
 const CONVERSATION_TYPE = "wiki-copilot-conversation";
 
@@ -39,11 +39,31 @@ function decodeText(value: string): string | null {
   }
 }
 
+function assistantState(turn: ConversationTurn): string {
+  if (turn.role !== "assistant" || (turn.sources === undefined && turn.knowledgeBaseHit === undefined)) return "";
+  return encodeText(JSON.stringify({ sources: turn.sources, knowledgeBaseHit: turn.knowledgeBaseHit }));
+}
+
+function parseAssistantState(value: string): Pick<AssistantConversationTurn, "sources" | "knowledgeBaseHit"> | null {
+  const decoded = decodeText(value);
+  if (decoded === null) return null;
+  try {
+    const state: unknown = JSON.parse(decoded);
+    if (!state || typeof state !== "object") return null;
+    const { sources, knowledgeBaseHit } = state as { sources?: unknown; knowledgeBaseHit?: unknown };
+    if (sources !== undefined && !Array.isArray(sources)) return null;
+    if (knowledgeBaseHit !== undefined && typeof knowledgeBaseHit !== "boolean") return null;
+    return { sources: sources as AssistantConversationTurn["sources"], knowledgeBaseHit };
+  } catch {
+    return null;
+  }
+}
+
 function parseTurns(markdown: string): ConversationTurn[] | null {
   const bodyStart = markdown.indexOf("\n---\n") + 5;
   if (bodyStart < 5) return null;
   const body = markdown.slice(bodyStart);
-  const sections = /^## (User|Assistant)\n\n<!-- wiki-copilot-content:([A-Za-z0-9+/]*={0,2}) -->\n?/gmu;
+  const sections = /^## (User|Assistant)\n\n<!-- wiki-copilot-content:([A-Za-z0-9+/]*={0,2}) -->(?:\n<!-- wiki-copilot-state:([A-Za-z0-9+/]*={0,2}) -->)?\n?/gmu;
   const turns: ConversationTurn[] = [];
   let cursor = 0;
   for (const section of body.matchAll(sections)) {
@@ -51,7 +71,13 @@ function parseTurns(markdown: string): ConversationTurn[] | null {
     const content = decodeText(section[2]!);
     if (content === null) return null;
     const role: ConversationRole = section[1] === "User" ? "user" : "assistant";
-    turns.push({ role, content });
+    if (role === "assistant" && section[3]) {
+      const state = parseAssistantState(section[3]);
+      if (!state) return null;
+      turns.push({ role, content, ...state });
+    } else {
+      turns.push({ role, content });
+    }
     cursor = section.index + section[0].length;
   }
   return turns.length > 0 && body.slice(cursor).trim() === "" ? turns : null;
@@ -67,10 +93,12 @@ export function serializeConversation(conversation: Conversation): string {
     `title: ${frontmatterValue(conversation.title)}`,
     "---"
   ];
-  const turns = conversation.turns.map((turn) => [
-    `## ${turn.role === "user" ? "User" : "Assistant"}`,
-    `<!-- wiki-copilot-content:${encodeText(turn.content)} -->`
-  ].join("\n\n"));
+  const turns = conversation.turns.map((turn) => {
+    const state = assistantState(turn);
+    return `## ${turn.role === "user" ? "User" : "Assistant"}\n\n` +
+      `<!-- wiki-copilot-content:${encodeText(turn.content)} -->` +
+      (state ? `\n<!-- wiki-copilot-state:${state} -->` : "");
+  });
   return [frontmatter.join("\n"), ...turns].join("\n\n") + "\n";
 }
 

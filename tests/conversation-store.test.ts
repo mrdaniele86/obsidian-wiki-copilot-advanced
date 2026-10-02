@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConversationStore } from "../src/chat/conversation-store";
 import { conversationFileName, serializeConversation } from "../src/chat/conversation-markdown";
+import { assistantRenderState } from "../src/chat/conversation-types";
 import type { Conversation } from "../src/chat/conversation-types";
 
 const conversation: Conversation = {
@@ -8,7 +9,13 @@ const conversation: Conversation = {
   createdAt: "2026-10-02T10:20:30.000Z",
   updatedAt: "2026-10-02T10:21:30.000Z",
   title: "Question",
-  turns: [{ role: "user", content: "Question" }, { role: "assistant", content: "Answer" }]
+  turns: [{ role: "user", content: "Question" }, {
+    role: "assistant", content: "Answer", knowledgeBaseHit: false,
+    sources: [{
+      id: "1", path: "Wiki/YAML.md", title: "YAML", heading: "Quoting",
+      role: "wiki", evidenceTier: "synthesis", score: 0.91, origin: "lexical"
+    }]
+  }]
 };
 
 function createVault(existing: { path: string; content: string }[] = []) {
@@ -67,6 +74,26 @@ describe("ConversationStore", () => {
       { path: validPath, conversation }
     ]);
     await expect(store.load(validPath)).resolves.toEqual(conversation);
+  });
+
+  it("reopens assistant citations and general-answer state after saving", async () => {
+    const vault = createVault();
+    const store = new ConversationStore(vault);
+
+    const path = await store.save("Memory Copilot/Conversations", conversation);
+
+    const reopened = await store.load(path);
+    const originalAssistant = conversation.turns[1];
+
+    expect(reopened).toEqual(conversation);
+    const assistant = reopened?.turns[1];
+    expect(assistant?.role).toBe("assistant");
+    if (assistant?.role !== "assistant") throw new Error("Expected assistant turn");
+    if (!originalAssistant || originalAssistant.role !== "assistant") throw new Error("Expected original assistant turn");
+    expect(assistantRenderState(assistant)).toEqual({
+      sources: originalAssistant.sources,
+      knowledgeBaseHit: false
+    });
   });
 
   it("uses distinct paths for different conversation IDs with the same timestamp and title", async () => {

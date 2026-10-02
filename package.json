@@ -1,6 +1,6 @@
 {
   "name": "obsidian-wiki-copilot",
-  "version": "2.1.0",
+  "version": "2.1.1-beta.1",
   "description": "Schema-aware, citation-first AI retrieval for persistent LLM Wiki vaults.",
   "main": "main.js",
   "type": "module",
@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "pnpm lint && pnpm test && pnpm build",
+    "verify:brat-beta": "node scripts/verify-brat-beta-release.mjs",
     "deploy": "pnpm build && node scripts/deploy.mjs"
   },
   "keywords": [

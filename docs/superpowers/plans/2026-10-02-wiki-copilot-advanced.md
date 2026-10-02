@@ -275,3 +275,67 @@ Run: `pnpm lint`; `pnpm test`; `pnpm build`
 Run: `git diff -- src/core src/llm tests/retriever.test.ts tests/retrieval-query.test.ts`
 
 - [ ] **Step 3: Inspect the final diff, report exact modified files and any unavailable manual Obsidian mobile check, then commit verification fixes if required.**
+
+### Task 8: Fork identity, beta artifacts, and BRAT release readiness
+
+**Files:**
+- Modify: `manifest.json`, `versions.json` if its version map requires the release version
+- Verify: `main.js` and `styles.css` build artifacts (not source edits)
+- Add: `docs/release/brat-beta-release-checklist.md`
+
+**Interfaces:**
+- Produces the distinct Obsidian plugin identity `wiki-copilot-advanced` and display name `Wiki Copilot Advanced`.
+- Produces a SemVer beta release contract: the Git tag, GitHub release name, and released `manifest.json` version are identical.
+- Produces the BRAT asset set: release-attached `main.js`, `manifest.json`, and `styles.css` when the project uses styles.
+
+- [ ] **Step 1: Write failing manifest identity and mobile-compatibility tests.**
+
+```ts
+const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
+expect(manifest.id).toBe("wiki-copilot-advanced");
+expect(manifest.name).toBe("Wiki Copilot Advanced");
+expect(manifest.isDesktopOnly).toBe(false);
+expect(manifest.minAppVersion).toBe("1.13.0");
+```
+
+- [ ] **Step 2: Run the focused test and verify the original identity fails.**
+
+Run: `pnpm test -- tests/manifest-release.test.ts`
+
+- [ ] **Step 3: Change only the fork identity and release metadata.**
+
+```json
+{
+  "id": "wiki-copilot-advanced",
+  "name": "Wiki Copilot Advanced",
+  "version": "2.1.1-beta.1",
+  "minAppVersion": "1.13.0",
+  "isDesktopOnly": false
+}
+```
+
+Keep the release version SemVer-valid. Before publishing, choose the actual next version rather than reusing `2.1.1-beta.1` if it has already been released, and keep `versions.json` consistent if the repository uses it for the build/release flow.
+
+- [ ] **Step 4: Add release-artifact validation and the BRAT checklist.**
+
+```ts
+expect(existsSync("main.js")).toBe(true);
+expect(existsSync("styles.css")).toBe(true);
+expect(manifest.version).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
+```
+
+Document that the GitHub release must have a tag and name exactly equal to the `manifest.json` version, and must attach the built `main.js`, `manifest.json`, and `styles.css`. The checklist must also include a clean-vault manual installation under `.obsidian/plugins/wiki-copilot-advanced/` and simultaneous installation with the original plugin.
+
+- [ ] **Step 5: Run artifact and full-project verification.**
+
+Run: `pnpm test -- tests/manifest-release.test.ts`; `pnpm lint`; `pnpm test`; `pnpm build`
+
+After the build, verify that the three release assets exist and that the manifest bundled for the release has the same version intended for the Git tag and release title.
+
+- [ ] **Step 6: Commit fork/release preparation separately.**
+
+Run: `git add manifest.json versions.json tests/manifest-release.test.ts docs/release/brat-beta-release-checklist.md && git commit -m "prepare BRAT beta release"`
+
+- [ ] **Step 7: Publish only after explicit user authorization.**
+
+Create a GitHub pre-release with the selected SemVer tag, identical release name, and direct assets `main.js`, `manifest.json`, and `styles.css`. Do not publish, tag, or upload assets as part of implementation without explicit authorization. In BRAT, add `mrdaniele86/obsidian-wiki-copilot-advanced`, select the expected release channel, and manually verify install/update on desktop and iOS.

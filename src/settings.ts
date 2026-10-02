@@ -13,6 +13,8 @@ import {
   providerModels
 } from "./model-presets";
 import type { ModelProvider } from "./model-presets";
+import { isUiLanguage } from "./i18n";
+import type { UiLanguage } from "./i18n";
 
 export type RetrievalMode = "precise" | "fast";
 
@@ -26,6 +28,7 @@ export interface ModelSettings {
 }
 
 export interface WikiCopilotSettings {
+  language: UiLanguage;
   autoDetectProfile: boolean;
   profile: KnowledgeProfileConfig;
   retrievalMode: RetrievalMode;
@@ -36,6 +39,7 @@ export interface WikiCopilotSettings {
 }
 
 export const DEFAULT_SETTINGS: WikiCopilotSettings = {
+  language: "auto",
   autoDetectProfile: true,
   profile: {
     ...DEFAULT_PROFILE_CONFIG,
@@ -88,6 +92,7 @@ function stringArray(value: unknown, fallback: string[]): string[] {
 
 export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
   const raw = data && typeof data === "object" ? data as Partial<WikiCopilotSettings> : {};
+  const language = isUiLanguage(raw.language) ? raw.language : DEFAULT_SETTINGS.language;
   const rawProfile: Partial<KnowledgeProfileConfig> = raw.profile && typeof raw.profile === "object" ? raw.profile : {};
   const rawModel: Partial<ModelSettings> = raw.model && typeof raw.model === "object" ? raw.model : {};
   const savedEndpoint = typeof rawModel.endpoint === "string" ? rawModel.endpoint.trim() : "";
@@ -104,6 +109,7 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
   const retrievalSettings = retrievalSettingsForMode(retrievalMode);
 
   return {
+    language,
     autoDetectProfile: true,
     profile: {
       schemaFiles: stringArray(rawProfile.schemaFiles, DEFAULT_SETTINGS.profile.schemaFiles),

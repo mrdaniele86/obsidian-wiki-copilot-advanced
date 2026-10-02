@@ -13,6 +13,10 @@ import {
 } from "../src/settings";
 
 describe("retrieval mode settings", () => {
+  it("defaults an invalid saved interface language to Auto", () => {
+    expect(loadWikiCopilotSettings(undefined).language).toBe("auto");
+    expect(loadWikiCopilotSettings({ language: "invalid" } as never).language).toBe("auto");
+  });
   it("uses precise retrieval by default", () => {
     const settings = loadWikiCopilotSettings(undefined);
 

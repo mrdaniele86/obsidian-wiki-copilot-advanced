@@ -235,7 +235,7 @@ export default class WikiCopilotPlugin extends Plugin {
   private async openCitationNow(file: TFile, subpath?: string): Promise<void> {
     const { leaf, created } = this.citationPreview.acquire(
       () => this.app.workspace.getLeaf("tab"),
-      (candidate) => this.isAttachedLeaf(candidate)
+      (candidate) => this.isReusableCitationPreviewLeaf(candidate)
     );
 
     try {
@@ -256,6 +256,11 @@ export default class WikiCopilotPlugin extends Plugin {
       }
     });
     return attached;
+  }
+
+  private isReusableCitationPreviewLeaf(candidate: WorkspaceLeaf): boolean {
+    return this.isAttachedLeaf(candidate)
+      && candidate.view.getViewType() !== WIKI_COPILOT_VIEW_TYPE;
   }
 
   isModelConfigured(): boolean {

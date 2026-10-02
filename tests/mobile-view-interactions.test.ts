@@ -22,6 +22,17 @@ describe("mobile view interactions", () => {
     expect(mainSource).toContain('this.t("main.index.building")');
     expect(mainSource).toContain('this.localizedIndexStatus(diagnostics.status)');
   });
+
+  it("opens citations in a dedicated tab instead of reusing a chat leaf", () => {
+    expect(mainSource).toContain('() => this.app.workspace.getLeaf("tab")');
+    expect(mainSource).toContain(
+      "(candidate) => this.isReusableCitationPreviewLeaf(candidate)"
+    );
+    expect(mainSource).toContain("private isReusableCitationPreviewLeaf(candidate: WorkspaceLeaf): boolean");
+    expect(mainSource).toContain(
+      "candidate.view.getViewType() !== WIKI_COPILOT_VIEW_TYPE"
+    );
+  });
   it("passes typed retrieval progress semantics to the plugin translation boundary", () => {
     expect(coordinatorSource).not.toMatch(/onProgress\?\.\("[\p{Script=Han}]/u);
     expect(retrieverSource).not.toMatch(/onProgress\?\.\("[\p{Script=Han}]/u);

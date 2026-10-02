@@ -19,7 +19,7 @@ describe("persistent conversation view", () => {
     expect(viewSource).toContain("openConversation(path: string)");
     expect(viewSource).toContain("await this.plugin.conversations.load(path)");
     expect(viewSource).toContain("this.renderConversationTurns()");
-    expect(viewSource).toContain("history.open = false");
+    expect(viewSource).toContain("this.setHistoryOpen(false);");
   });
 
   it("offers localized, confirmed deletion from each history item", () => {
@@ -27,6 +27,19 @@ describe("persistent conversation view", () => {
     expect(viewSource).toContain('this.plugin.t("view.deleteConversationConfirm"');
     expect(viewSource).toContain("await this.plugin.conversations.delete(path)");
     expect(viewSource).toContain("void this.renderConversationHistory()");
+  });
+
+  it("keeps history behind an accessible header toggle and closes it outside the panel", () => {
+    expect(viewSource).toContain('cls: "clickable-icon wiki-copilot-history-toggle"');
+    expect(viewSource).toContain('"aria-label": this.plugin.t("view.history")');
+    expect(viewSource).toContain('"aria-expanded": "false"');
+    expect(viewSource).toContain("setIcon(this.historyToggle, \"history\")");
+    expect(viewSource).toContain("this.setHistoryOpen(!this.historyOpen)");
+    expect(viewSource).toContain('this.registerDomEvent(this.containerEl.ownerDocument, "pointerdown"');
+    expect(viewSource).toContain("this.historyEl.contains(target) || this.historyToggle.contains(target)");
+    expect(viewSource).toContain('querySelector(".modal-container")');
+    expect(viewSource).toContain("this.setHistoryOpen(false);");
+    expect(viewSource).not.toContain('history.createEl("summary"');
   });
 
   it("persists only complete model exchanges", () => {

@@ -56,6 +56,8 @@ export class WikiCopilotView extends ItemView {
   private queryEl!: HTMLTextAreaElement;
   private askButton!: HTMLButtonElement;
   private historyEl!: HTMLElement;
+  private historyToggle!: HTMLButtonElement;
+  private historyOpen = false;
   private turns: ChatTurn[] = [];
   private conversation: Conversation | null = null;
   private conversationPath: string | null = null;
@@ -121,7 +123,8 @@ export class WikiCopilotView extends ItemView {
     container.querySelector(".wiki-copilot-title-group h2")?.setText(this.plugin.t("view.title"));
     const actionButtons = container.querySelectorAll<HTMLButtonElement>(".wiki-copilot-header-actions button");
     actionButtons[0]?.setAttribute("aria-label", this.plugin.t("view.rebuild"));
-    actionButtons[1]?.setAttribute("aria-label", this.plugin.t("view.newConversation"));
+    actionButtons[1]?.setAttribute("aria-label", this.plugin.t("view.history"));
+    actionButtons[2]?.setAttribute("aria-label", this.plugin.t("view.newConversation"));
     this.queryEl.setAttribute("placeholder", this.plugin.t("composer.placeholder"));
     container.querySelector(".wiki-copilot-shortcut")?.setText(this.plugin.t("composer.shortcut"));
     this.setBusy(this.busy);
@@ -190,6 +193,16 @@ export class WikiCopilotView extends ItemView {
     setIcon(rebuild, "refresh-cw");
     this.registerDomEvent(rebuild, "click", () => void this.plugin.rebuildIndex());
 
+    this.historyToggle = actions.createEl("button", {
+      cls: "clickable-icon wiki-copilot-history-toggle",
+      attr: {
+        "aria-label": this.plugin.t("view.history"),
+        "aria-expanded": "false"
+      }
+    });
+    setIcon(this.historyToggle, "history");
+    this.registerDomEvent(this.historyToggle, "click", () => this.setHistoryOpen(!this.historyOpen));
+
     const clear = actions.createEl("button", {
       cls: "clickable-icon",
       attr: { "aria-label": this.plugin.t("view.newConversation") }
@@ -198,7 +211,15 @@ export class WikiCopilotView extends ItemView {
     this.registerDomEvent(clear, "click", () => this.startNewConversation());
 
     this.historyEl = container.createDiv({ cls: "wiki-copilot-history" });
-    void this.renderConversationHistory();
+    this.registerDomEvent(this.containerEl.ownerDocument, "pointerdown", (event) => {
+      const target = event.target;
+      if (!this.historyOpen || !(target instanceof Node) ||
+        this.historyEl.contains(target) || this.historyToggle.contains(target) ||
+        this.containerEl.ownerDocument.querySelector(".modal-container")) {
+        return;
+      }
+      this.setHistoryOpen(false);
+    });
 
     this.chatEl = container.createDiv({ cls: "wiki-copilot-chat" });
     this.registerDomEvent(this.chatEl, "pointerdown", (event) => {
@@ -309,8 +330,7 @@ export class WikiCopilotView extends ItemView {
   private async renderConversationHistory(): Promise<void> {
     if (!this.historyEl) return;
     this.historyEl.empty();
-    const history = this.historyEl.createEl("details");
-    history.createEl("summary", { text: this.plugin.t("view.history") });
+    const history = this.historyEl.createDiv({ cls: "wiki-copilot-history-panel" });
     try {
       const conversations = await this.plugin.conversations.list(this.plugin.settings.conversationFolder);
       if (conversations.length === 0) {
@@ -352,13 +372,19 @@ export class WikiCopilotView extends ItemView {
       this.conversation = conversation;
       this.conversationPath = path;
       this.turns = conversation.turns.map((turn) => ({ ...turn }));
-      const history = this.historyEl.querySelector<HTMLDetailsElement>("details");
-      if (history) history.open = false;
+      this.setHistoryOpen(false);
       this.renderConversationTurns();
     } catch (error) {
       console.error("Wiki Copilot: failed to open conversation.", error);
       new Notice(this.plugin.t("view.historyLoadFailed"));
     }
+  }
+
+  private setHistoryOpen(open: boolean): void {
+    this.historyOpen = open;
+    this.historyEl.toggleClass("is-open", open);
+    this.historyToggle.setAttribute("aria-expanded", String(open));
+    if (open) void this.renderConversationHistory();
   }
 
   private confirmDeleteConversation(path: string, title: string): void {

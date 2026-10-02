@@ -46,6 +46,18 @@ describe("mobile interaction styles", () => {
     expect(styles).not.toMatch(/wiki-copilot-composer[^}]*transform:/su);
   });
 
+  it("keeps each mobile history entry as one compact row with an internal delete target", () => {
+    expect(styles).toMatch(
+      /body\.is-mobile \.wiki-copilot-history-entry\s*\{[^}]*min-width:\s*0;[^}]*gap:\s*4px;[^}]*border:\s*1px solid var\(--background-modifier-border\);/su
+    );
+    expect(styles).toMatch(
+      /body\.is-mobile \.wiki-copilot-history-item\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/su
+    );
+    expect(styles).toMatch(
+      /body\.is-mobile \.wiki-copilot-history-delete\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/su
+    );
+  });
+
   it("keeps mobile composer content above the browser navigation safe area", () => {
     expect(styles).toMatch(
       /body\.is-mobile\.is-phone \.wiki-copilot-composer\s*\{[^}]*padding-bottom:\s*max\(\s*8px,\s*env\(safe-area-inset-bottom\)\s*\);/su

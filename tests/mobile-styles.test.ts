@@ -66,7 +66,16 @@ describe("mobile interaction styles", () => {
 
   it("caps the auto-growing mobile textarea at a compact height", () => {
     expect(styles).toMatch(
-      /body\.is-mobile textarea\.wiki-copilot-input\s*\{[^}]*min-height:\s*44px;[^}]*max-height:\s*120px;/su
+      /body\.is-mobile textarea\.wiki-copilot-input\s*\{[^}]*min-height:\s*calc\(2\.8em \+ 22px\);[^}]*max-height:\s*120px;/su
+    );
+  });
+
+  it("reserves two placeholder lines in the mobile composer while keeping the send control aligned", () => {
+    expect(styles).toMatch(
+      /body\.is-mobile textarea\.wiki-copilot-input\s*\{[^}]*box-sizing:\s*border-box;[^}]*min-height:\s*calc\(2\.8em \+ 22px\);/su
+    );
+    expect(styles).toMatch(
+      /body\.is-mobile \.wiki-copilot-composer\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto;[^}]*align-items:\s*end;/su
     );
   });
 

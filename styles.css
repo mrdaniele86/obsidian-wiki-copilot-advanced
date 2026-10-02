@@ -596,8 +596,9 @@ button.wiki-copilot-stop-button:hover {
 }
 
 body.is-mobile textarea.wiki-copilot-input {
+  box-sizing: border-box;
   height: var(--wiki-copilot-input-height, 44px);
-  min-height: 44px;
+  min-height: calc(2.8em + 22px);
   max-height: 120px;
   padding: 10px 12px;
   font-size: 16px;

@@ -1,5 +1,5 @@
 import { normalizePath, Notice, Platform, Plugin, TFile, WorkspaceLeaf } from "obsidian";
-import { AnswerTimeoutError, answerTimeoutMessage } from "./core/answer-error";
+import { AnswerTimeoutError, answerTimeoutDetails } from "./core/answer-error";
 import { validateAnswerCitations } from "./core/citations";
 import { buildAnswerContext } from "./core/context-builder";
 import type {
@@ -20,6 +20,8 @@ import { OpenAICompatibleClient } from "./llm/openai-compatible";
 import type {
   ActiveCompletionMode,
   CompletionActivity,
+  ModelCompletionWarning,
+  ModelResponseDetail,
   ModelResponseMode
 } from "./llm/openai-compatible";
 import {
@@ -47,9 +49,14 @@ import {
 } from "./settings";
 import type { WikiCopilotSettings } from "./settings";
 import { citationOpenState } from "./ui/citation-open-state";
+import { createTranslator, resolveUiLanguage } from "./i18n";
+import type { TranslationKey, TranslationVariables } from "./i18n";
 import { ReusableLeafController } from "./ui/temporary-leaf-controller";
 import { planMobileRootView } from "./ui/view-leaf-placement";
+import { ConversationStore } from "./chat/conversation-store";
 import { WikiCopilotView, WIKI_COPILOT_VIEW_TYPE } from "./ui/wiki-copilot-view";
+import type { IndexStatus } from "./obsidian/index-coordinator";
+import type { RetrievalProgressStage } from "./core/retrieval-progress";
 
 const RETRIEVAL_PLANNER_TIMEOUT_MS = 15_000;
 
@@ -63,18 +70,58 @@ export interface AnswerOptions {
     knowledgeBaseHit: boolean,
     metrics: AnswerRetrievalMetrics
   ) => void;
-  onResponseMode?: (mode: ActiveCompletionMode, detail?: string) => void;
+  onResponseMode?: (mode: ActiveCompletionMode, detail?: ModelResponseDetail) => void;
   onModelActivity?: (activity: CompletionActivity) => void;
+  onModelWarning?: (warning: ModelCompletionWarning) => void;
 }
 
 export default class WikiCopilotPlugin extends Plugin {
   override settings: WikiCopilotSettings = DEFAULT_SETTINGS;
   indexCoordinator!: IndexCoordinator;
+  conversations!: ConversationStore;
 
   private llmClient!: OpenAICompatibleClient;
   private manualRebuildPromise: Promise<void> | null = null;
   private readonly citationPreview = new ReusableLeafController<WorkspaceLeaf>();
   private citationOpenQueue: Promise<void> = Promise.resolve();
+
+  t(key: TranslationKey, variables?: TranslationVariables): string {
+    return createTranslator(resolveUiLanguage(this.settings.language, window.navigator.language))(key, variables);
+  }
+
+  localizedIndexStatus(status: IndexStatus): string {
+    if (status.state === "ready") return this.t("view.ready");
+    if (status.state === "building") return this.t("main.index.building");
+    if (status.state === "error") return this.t("main.index.error");
+    return this.t("main.index.idle");
+  }
+
+  private localizeRetrievalProgress(stage: RetrievalProgressStage): string {
+    const keys: Readonly<Record<RetrievalProgressStage, TranslationKey>> = {
+      fast: "main.progress.fast",
+      enumerating: "main.progress.enumerating",
+      scanning: "main.progress.scanning",
+      extracting: "main.progress.extracting"
+    };
+    return this.t(keys[stage]);
+  }
+
+  private localizeModelResponseDetail(detail: ModelResponseDetail): string {
+    const keys: Readonly<Record<ModelResponseDetail, TranslationKey>> = {
+      "streaming-unavailable": "view.model.streamingUnavailable",
+      "streaming-unsupported": "view.model.streamingUnsupported",
+      "complete-response": "view.model.completeResponse"
+    };
+    return this.t(keys[detail]);
+  }
+
+  private localizeModelWarning(warning: ModelCompletionWarning): string {
+    const keys: Readonly<Record<ModelCompletionWarning, TranslationKey>> = {
+      length: "view.model.lengthWarning",
+      "content-filter": "view.model.contentFilterWarning"
+    };
+    return this.t(keys[warning]);
+  }
 
   override async onload(): Promise<void> {
     const savedData: unknown = await this.loadData();
@@ -103,33 +150,34 @@ export default class WikiCopilotPlugin extends Plugin {
       cacheRepository,
       { lowMemory: Platform.isMobile }
     );
+    this.conversations = new ConversationStore(this.app.vault);
     this.llmClient = new OpenAICompatibleClient(() => this.getApiKey());
 
     this.registerView(
       WIKI_COPILOT_VIEW_TYPE,
       (leaf) => new WikiCopilotView(leaf, this)
     );
-    this.addRibbonIcon("message-circle", "打开 Wiki Copilot", () => void this.activateView());
+    this.addRibbonIcon("message-circle", this.t("command.open"), () => void this.activateView());
     this.addSettingTab(new WikiCopilotSettingTab(this.app, this));
 
     this.addCommand({
       id: "open-chat",
-      name: "打开问答侧栏",
+      name: this.t("command.open"),
       callback: () => void this.activateView()
     });
     this.addCommand({
       id: "rebuild-knowledge-index",
-      name: "重建知识索引",
+      name: this.t("command.rebuild"),
       callback: () => void this.rebuildIndex()
     });
     this.addCommand({
       id: "show-detected-profile",
-      name: "显示识别到的知识库结构",
+      name: this.t("command.profile"),
       callback: () => this.showProfileNotice()
     });
     this.addCommand({
       id: "show-index-diagnostics",
-      name: "显示知识索引诊断",
+      name: this.t("command.diagnostics"),
       callback: () => this.showIndexDiagnostics()
     });
 
@@ -234,10 +282,10 @@ export default class WikiCopilotPlugin extends Plugin {
     this.manualRebuildPromise = operation;
     try {
       await operation;
-      new Notice("Wiki Copilot 索引已重建。 ");
+      new Notice(this.t("main.index.rebuilt"));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      new Notice(`Wiki Copilot 索引失败：${message}`);
+      new Notice(this.t("main.index.failed", { message }));
     } finally {
       if (this.manualRebuildPromise === operation) {
         this.manualRebuildPromise = null;
@@ -256,15 +304,18 @@ export default class WikiCopilotPlugin extends Plugin {
         onProgress?.(message);
       }
     };
+    const reportRetrievalProgress = (stage: RetrievalProgressStage): void => {
+      reportProgress(this.localizeRetrievalProgress(stage));
+    };
     if (this.indexCoordinator.currentStatus.state !== "ready") {
-      reportProgress("正在准备本地知识索引…");
+      reportProgress(this.t("main.progress.preparing"));
     }
     await withAbortSignal(this.indexCoordinator.ensureReady(), signal);
     const retrievalQuery = retrievalQueryForQuestion(question, history);
     const precise = this.settings.retrievalMode === "precise";
     let searchQueries = [retrievalQuery];
     if (this.isModelConfigured()) {
-      reportProgress("正在生成检索关键词…");
+      reportProgress(this.t("main.progress.planning"));
       try {
         searchQueries = await this.llmClient.planRetrievalQueries(
           retrievalQuery,
@@ -285,7 +336,7 @@ export default class WikiCopilotPlugin extends Plugin {
       }
     }
     if (precise) {
-      reportProgress("正在核对候选资料…");
+      reportProgress(this.t("main.progress.checking"));
     }
     const activePath = this.settings.prioritizeActiveNote
       ? this.app.workspace.getActiveFile()?.path
@@ -296,20 +347,20 @@ export default class WikiCopilotPlugin extends Plugin {
           retrievalQuery,
           searchQueries,
           { ...this.settings.retrieval, activePath },
-          reportProgress,
+          reportRetrievalProgress,
           signal
         )
         : this.indexCoordinator.retriever.retrievePlannedQueries(
           retrievalQuery,
           searchQueries,
           { ...this.settings.retrieval, activePath },
-          reportProgress
+          reportRetrievalProgress
         );
 
     const hasExactIdentifiers = technicalIdentifierTokens(retrievalQuery).length > 0;
     let identifierRepairAttempted = false;
     if (!precise && Platform.isMobile && hasExactIdentifiers) {
-      reportProgress("正在校验本机精确标识符索引…");
+      reportProgress(this.t("main.progress.identifier"));
       await withAbortSignal(
         this.indexCoordinator.repairTechnicalIdentifierCoverage(retrievalQuery),
         signal
@@ -322,13 +373,13 @@ export default class WikiCopilotPlugin extends Plugin {
       signal
     );
     if (!precise && !identifierRepairAttempted && !hasTechnicalIdentifierAnchor(retrievalQuery, result)) {
-      reportProgress("正在校验本机精确标识符索引…");
+      reportProgress(this.t("main.progress.identifier"));
       const repaired = await withAbortSignal(
         this.indexCoordinator.repairTechnicalIdentifierCoverage(retrievalQuery),
         signal
       );
       if (repaired > 0) {
-        reportProgress(`已补齐 ${repaired} 个标识符索引条目，正在重新检索…`);
+        reportProgress(this.t("main.progress.identifierRepaired", { count: repaired }));
         result = await withAbortSignal(
           runRetrieval(),
           signal
@@ -337,13 +388,13 @@ export default class WikiCopilotPlugin extends Plugin {
     }
     let guardedResult = discardUnanchoredTechnicalResult(retrievalQuery, result);
     if (!precise && Platform.isMobile && guardedResult.chunks.length === 0) {
-      reportProgress("正在直接检查本机知识文件…");
+      reportProgress(this.t("main.progress.files"));
       const repaired = await withAbortSignal(
         this.indexCoordinator.repairLexicalCoverage(searchQueries.join(" ")),
         signal
       );
       if (repaired > 0) {
-        reportProgress(`已补齐 ${repaired} 个查询相关索引条目，正在重新检索…`);
+        reportProgress(this.t("main.progress.filesRepaired", { count: repaired }));
         result = await withAbortSignal(
           runRetrieval(),
           signal
@@ -381,7 +432,7 @@ export default class WikiCopilotPlugin extends Plugin {
       ? null
       : exactIdentifierMissingMessage(retrieval.query);
     if (missingExactIdentifier) {
-      options.onProgress?.("未找到精确标识符依据");
+      options.onProgress?.(this.t("main.progress.missingIdentifier"));
       return {
         markdown: missingExactIdentifier,
         sources: [],
@@ -393,12 +444,13 @@ export default class WikiCopilotPlugin extends Plugin {
       this.settings.model.serviceName
     );
     options.onProgress?.(knowledgeBaseHit
-      ? `已检索 ${retrieval.chunks.length} 个知识页面，${modelServiceName}思考中…`
-      : `未命中当前知识库，${modelServiceName}思考中…`);
+      ? this.t("main.progress.hit", { count: retrieval.chunks.length, service: modelServiceName })
+      : this.t("main.progress.miss", { service: modelServiceName }));
     const retrievalRange = this.settings.retrievalRange;
     const retrievalMode = this.settings.retrievalMode;
     const timeoutMilliseconds = modelTimeoutMsForRange(retrievalRange);
     let rawMarkdown: string;
+    const modelWarnings: string[] = [];
     try {
       rawMarkdown = await this.llmClient.answer(
         question,
@@ -412,20 +464,38 @@ export default class WikiCopilotPlugin extends Plugin {
           responseMode: options.responseMode,
           onDelta: options.onDelta,
           onActivity: options.onModelActivity,
+          onWarning: (warning) => {
+            modelWarnings.push(this.localizeModelWarning(warning));
+            options.onModelWarning?.(warning);
+          },
           onResponseMode: (mode, detail) => {
             options.onResponseMode?.(mode, detail);
             if (detail) {
-              options.onProgress?.(detail);
+              options.onProgress?.(this.localizeModelResponseDetail(detail));
             } else if (mode === "non-stream") {
-              options.onProgress?.(`${modelServiceName}思考中（兼容模式）…`);
+              options.onProgress?.(this.t("main.progress.compatibility", { service: modelServiceName }));
             }
           }
         }
       );
+      if (modelWarnings.length > 0) {
+        rawMarkdown += modelWarnings.map((warning) => `\n\n> [!warning] ${warning}`).join("");
+      }
     } catch (error) {
       if (error instanceof RequestTimeoutError) {
+        const timeout = answerTimeoutDetails(
+          modelServiceName,
+          error.milliseconds,
+          retrievalMode
+        );
+        const timeoutKey: TranslationKey = timeout.mode === "precise"
+          ? "main.answerTimeout.precise"
+          : "main.answerTimeout.fast";
         throw new AnswerTimeoutError(
-          answerTimeoutMessage(modelServiceName, error.milliseconds, retrievalMode),
+          this.t(timeoutKey, {
+            service: timeout.service,
+            seconds: timeout.seconds
+          }),
           retrieval
         );
       }
@@ -464,7 +534,7 @@ export default class WikiCopilotPlugin extends Plugin {
   private showProfileNotice(): void {
     const profile = this.indexCoordinator.profile;
     if (!profile) {
-      new Notice("知识库结构尚未识别完成。 ");
+      new Notice(this.t("main.profile.pending"));
       return;
     }
     const sourceRoots = [...new Set([
@@ -472,10 +542,10 @@ export default class WikiCopilotPlugin extends Plugin {
       ...profile.pendingSourceRoots
     ])];
     new Notice([
-      `Schema: ${profile.schemaFiles.join(", ") || "未识别"}`,
-      `Index: ${profile.indexFiles.join(", ") || "未识别"}`,
-      `Wiki: ${profile.wikiRoots.join(", ") || "未识别"}`,
-      `Sources: ${sourceRoots.join(", ") || "未识别"}`
+      this.t("main.profile.schema", { value: profile.schemaFiles.join(", ") || this.t("main.unrecognized") }),
+      this.t("main.profile.index", { value: profile.indexFiles.join(", ") || this.t("main.unrecognized") }),
+      this.t("main.profile.wiki", { value: profile.wikiRoots.join(", ") || this.t("main.unrecognized") }),
+      this.t("main.profile.sources", { value: sourceRoots.join(", ") || this.t("main.unrecognized") })
     ].join("\n"), 10_000);
   }
 
@@ -483,22 +553,21 @@ export default class WikiCopilotPlugin extends Plugin {
     const activePath = this.app.workspace.getActiveFile()?.path;
     const diagnostics = this.indexCoordinator.getDiagnostics(activePath);
     const cacheLabel = diagnostics.cacheScope === "device"
-      ? "设备本地 IndexedDB"
+      ? this.t("main.diagnostics.device")
       : diagnostics.cacheScope === "vault"
-        ? "Vault 插件目录"
-        : "未启用";
+        ? this.t("main.diagnostics.vault") : this.t("main.diagnostics.disabled");
     const activeLine = diagnostics.activePath
-      ? `当前笔记：${diagnostics.activePath.indexed ? "已索引" : "未索引"} · ${diagnostics.activePath.role} · ${diagnostics.activePath.chunks} 片段`
-      : "当前笔记：未打开 Markdown";
+      ? this.t("main.diagnostics.active", { indexed: this.t(diagnostics.activePath.indexed ? "main.indexed" : "main.notIndexed"), role: diagnostics.activePath.role, chunks: diagnostics.activePath.chunks })
+      : this.t("main.diagnostics.noActive");
     new Notice([
-      diagnostics.status.message,
-      `缓存：${cacheLabel}`,
-      `Obsidian 当前可见：${diagnostics.visibleMarkdownFiles} 个 Markdown`,
-      `索引跟踪：${diagnostics.trackedMarkdownFiles} 个 Markdown`,
-      `Wiki：${diagnostics.wikiFiles} 页 / ${diagnostics.wikiChunks} 片段`,
-      `原文目录：${diagnostics.sourceFiles} 页`,
+      this.localizedIndexStatus(diagnostics.status),
+      this.t("main.diagnostics.cache", { value: cacheLabel }),
+      this.t("main.diagnostics.visible", { count: diagnostics.visibleMarkdownFiles }),
+      this.t("main.diagnostics.tracked", { count: diagnostics.trackedMarkdownFiles }),
+      this.t("main.diagnostics.wiki", { files: diagnostics.wikiFiles, chunks: diagnostics.wikiChunks }),
+      this.t("main.diagnostics.sources", { count: diagnostics.sourceFiles }),
       activeLine,
-      diagnostics.pendingUpdates > 0 ? `等待增量更新：${diagnostics.pendingUpdates} 项` : "增量更新：无积压"
+      diagnostics.pendingUpdates > 0 ? this.t("main.diagnostics.pending", { count: diagnostics.pendingUpdates }) : this.t("main.diagnostics.clear")
     ].join("\n"), 15_000);
   }
 

@@ -5,6 +5,7 @@ import {
   preciseRoleMultiplier
 } from "../core/full-markdown-search";
 import { HybridWikiRetriever } from "../core/hybrid-retriever";
+import type { RetrievalProgress } from "../core/retrieval-progress";
 import {
   isMetadataEventCovered,
   requiresFullProfileRebuild
@@ -272,7 +273,7 @@ export class IndexCoordinator {
     query: string,
     searchQueries: readonly string[],
     overrides: Partial<RetrievalOptions> = {},
-    onProgress?: (message: string) => void,
+    onProgress?: RetrievalProgress,
     signal?: AbortSignal
   ): Promise<RetrievalResult> {
     const profile = this.profile;
@@ -299,7 +300,7 @@ export class IndexCoordinator {
       });
     }
 
-    onProgress?.("正在枚举全部 Markdown…");
+    onProgress?.("enumerating");
     const folders = [""];
     const visitedFolders = new Set<string>();
     const adapterScheduler = new CooperativeScheduler(8, 16);
@@ -346,7 +347,7 @@ export class IndexCoordinator {
     const fileCandidates: FullMarkdownCandidate[] = [];
     const scanScheduler = new CooperativeScheduler(8, 4);
 
-    onProgress?.("正在扫描全部 Markdown…");
+    onProgress?.("scanning");
     for (let index = 0; index < files.length; index += 1) {
       throwIfSearchAborted(signal);
       const entry = files[index];
@@ -381,7 +382,7 @@ export class IndexCoordinator {
     const rankedChunks: RetrievedChunk[] = [];
     const chunkScheduler = new CooperativeScheduler(8, 4);
 
-    onProgress?.("正在提取相关段落…");
+    onProgress?.("extracting");
     for (let index = 0; index < candidates.length; index += 1) {
       throwIfSearchAborted(signal);
       const candidate = candidates[index];

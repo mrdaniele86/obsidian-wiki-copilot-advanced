@@ -11,8 +11,25 @@ import {
   loadWikiCopilotSettings,
   WikiCopilotSettingTab
 } from "../src/settings";
+import { en } from "../src/i18n/en";
+import { it as italian } from "../src/i18n/it";
+import { zh } from "../src/i18n/zh";
+
+describe("translation dictionaries", () => {
+  it("covers every English key with Italian and Chinese translations", () => {
+    expect(Object.keys(italian).sort()).toEqual(Object.keys(en).sort());
+    expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort());
+    expect(italian["settings.model.heading"]).toBe("Servizio modello");
+    expect(zh["settings.model.heading"]).toBe("模型服务");
+    expect(zh["role.topic"]).toBe("主题");
+  });
+});
 
 describe("retrieval mode settings", () => {
+  it("defaults an invalid saved interface language to Auto", () => {
+    expect(loadWikiCopilotSettings(undefined).language).toBe("auto");
+    expect(loadWikiCopilotSettings({ language: "invalid" } as never).language).toBe("auto");
+  });
   it("uses precise retrieval by default", () => {
     const settings = loadWikiCopilotSettings(undefined);
 
@@ -83,7 +100,8 @@ describe("model response mode settings", () => {
   it("does not expose a response-mode choice in settings", () => {
     const plugin = {
       settings: loadWikiCopilotSettings(undefined),
-      getApiKey: () => null
+      getApiKey: () => null,
+      t: (key: string) => key
     };
     const tab = new WikiCopilotSettingTab({} as never, plugin as never);
     const definitions = tab.getSettingDefinitions() as unknown as Array<{
@@ -100,10 +118,57 @@ describe("model response mode settings", () => {
 });
 
 describe("settings presentation", () => {
+  it("redraws the settings controls after persisting a language change", async () => {
+    const plugin = {
+      settings: loadWikiCopilotSettings(undefined),
+      getApiKey: () => null,
+      saveSettings: vi.fn().mockResolvedValue(undefined),
+      t: (key: string) => key
+    };
+    const tab = new WikiCopilotSettingTab({} as never, plugin as never);
+    const update = vi.fn();
+    Object.assign(tab, { update });
+
+    await tab.setControlValue("language", "it");
+
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    expect(update).toHaveBeenCalledOnce();
+  });
+
+  it("localizes the interface language selector through the plugin translator", () => {
+    const plugin = {
+      settings: loadWikiCopilotSettings(undefined),
+      getApiKey: () => null,
+      t: (key: string) => ({
+        "settings.interface.heading": "Interfaccia",
+        "settings.interface.language.name": "Lingua dell'interfaccia",
+        "settings.interface.language.desc": "Scegli la lingua dell'interfaccia.",
+        "language.auto": "Automatico",
+        "language.it": "Italiano",
+        "language.en": "Inglese",
+        "language.zh": "Cinese"
+      })[key] ?? key
+    };
+    const tab = new WikiCopilotSettingTab({} as never, plugin as never);
+    const interfaceGroup = tab.getSettingDefinitions()[0];
+
+    expect(interfaceGroup).toMatchObject({
+      heading: "Interfaccia",
+      items: [{
+        name: "Lingua dell'interfaccia",
+        desc: "Scegli la lingua dell'interfaccia.",
+        control: {
+          options: { auto: "Automatico", it: "Italiano", en: "Inglese", zh: "Cinese" }
+        }
+      }]
+    });
+  });
+
   it("exposes precise and fast retrieval without the legacy range control", () => {
     const plugin = {
       settings: loadWikiCopilotSettings(undefined),
-      getApiKey: () => null
+      getApiKey: () => null,
+      t: (key: string) => key
     };
     const tab = new WikiCopilotSettingTab({} as never, plugin as never);
     const definitions = tab.getSettingDefinitions() as unknown as Array<{
@@ -114,27 +179,28 @@ describe("settings presentation", () => {
       }>;
     }>;
     const retrieval = definitions.flatMap((definition) => definition.items ?? [])
-      .find((item) => item.name === "检索模式");
+      .find((item) => item.name === "settings.retrieval.name");
 
     expect(retrieval?.control).toMatchObject({
       key: "retrievalMode",
       options: {
-        precise: "精准（推荐）",
-        fast: "快速"
+        precise: "settings.retrieval.precise",
+        fast: "settings.retrieval.fast"
       }
     });
     expect(retrieval?.desc).toBe(
-      "精准扫描全部 Markdown；快速搜索已整理 Wiki。"
+      "settings.retrieval.desc"
     );
   });
 
   it("renders a concise plugin introduction with the responsive styling hook", () => {
     const plugin = {
       settings: loadWikiCopilotSettings(undefined),
-      getApiKey: () => null
+      getApiKey: () => null,
+      t: (key: string) => key
     };
     const tab = new WikiCopilotSettingTab({} as never, plugin as never);
-    const intro = tab.getSettingDefinitions()[0] as {
+    const intro = tab.getSettingDefinitions().find((definition) => "name" in definition && definition.name === "Wiki Copilot") as {
       render: (setting: unknown, group: unknown) => void;
     };
     const setting = {
@@ -151,7 +217,7 @@ describe("settings presentation", () => {
 
     expect(setting.setClass).toHaveBeenCalledWith("wiki-copilot-settings-intro");
     expect(setting.setDesc).toHaveBeenCalledWith(
-      "面向 LLM Wiki 的知识库问答插件，支持精准检索与来源引用。"
+      "settings.intro"
     );
     expect(setting.setHeading).toHaveBeenCalledOnce();
   });

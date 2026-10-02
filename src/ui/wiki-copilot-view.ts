@@ -19,7 +19,10 @@ import type { RetrievalResult, SourceReference } from "../core/types";
 import {
   StreamFallbackRequiredError
 } from "../llm/openai-compatible";
+import { localizeModelError } from "./model-response-localization";
 import type { ChatTurn } from "../core/types";
+import { assistantRenderState } from "../chat/conversation-types";
+import type { Conversation } from "../chat/conversation-types";
 import type { ModelResponseMode } from "../llm/openai-compatible";
 import { RequestCancelledError } from "../llm/request-timeout";
 import type WikiCopilotPlugin from "../main";
@@ -34,18 +37,6 @@ import { findExpandedSourceButton } from "./source-highlight";
 import { StreamingMarkdownRenderer } from "./streaming-markdown-renderer";
 
 export const WIKI_COPILOT_VIEW_TYPE = "wiki-copilot-view";
-
-const ROLE_LABELS: Readonly<Record<SourceReference["role"], string>> = {
-  schema: "Schema",
-  index: "导航",
-  topic: "Topic",
-  concept: "Concept",
-  summary: "Summary",
-  wiki: "Wiki",
-  "stable-source": "原文",
-  "pending-source": "原文",
-  other: "普通笔记"
-};
 
 interface AssistantMessageHandle {
   update(markdown: string): void;
@@ -63,7 +54,9 @@ export class WikiCopilotView extends ItemView {
   private statusEl!: HTMLElement;
   private queryEl!: HTMLTextAreaElement;
   private askButton!: HTMLButtonElement;
+  private historyEl!: HTMLElement;
   private turns: ChatTurn[] = [];
+  private conversation: Conversation | null = null;
   private unsubscribeStatus: (() => void) | null = null;
   private conversationComponent: Component | null = null;
   private activeRequest: AbortController | null = null;
@@ -76,6 +69,7 @@ export class WikiCopilotView extends ItemView {
   private mobileNavAnimationFrames = 0;
   private requestSequence = 0;
   private busy = false;
+  private lastStatus: IndexStatus | null = null;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: WikiCopilotPlugin) {
     super(leaf);
@@ -86,7 +80,7 @@ export class WikiCopilotView extends ItemView {
   }
 
   override getDisplayText(): string {
-    return "Wiki Copilot";
+    return this.plugin.t("view.title");
   }
 
   override getIcon(): string {
@@ -113,11 +107,63 @@ export class WikiCopilotView extends ItemView {
     this.queryEl?.focus();
   }
 
+  setProtocolQuery(query: string, send = false): void {
+    this.queryEl.value = query;
+    this.scheduleComposerResize();
+    if (send) void this.ask();
+  }
+
   refreshConfigurationState(): void {
+    const container = this.containerEl.children[1] as HTMLElement | undefined;
+    if (!container || !this.queryEl || !this.askButton) return;
+    container.querySelector(".wiki-copilot-title-group h2")?.setText(this.plugin.t("view.title"));
+    const actionButtons = container.querySelectorAll<HTMLButtonElement>(".wiki-copilot-header-actions button");
+    actionButtons[0]?.setAttribute("aria-label", this.plugin.t("view.rebuild"));
+    actionButtons[1]?.setAttribute("aria-label", this.plugin.t("view.newConversation"));
+    this.queryEl.setAttribute("placeholder", this.plugin.t("composer.placeholder"));
+    container.querySelector(".wiki-copilot-shortcut")?.setText(this.plugin.t("composer.shortcut"));
+    this.setBusy(this.busy);
     const welcome = this.chatEl?.querySelector(".wiki-copilot-welcome");
     if (welcome) {
       welcome.remove();
       this.renderWelcome();
+    }
+    if (this.lastStatus) this.renderStatus(this.lastStatus);
+    this.refreshConversationChrome();
+  }
+
+  private refreshConversationChrome(): void {
+    if (!this.chatEl) return;
+    for (const label of this.chatEl.querySelectorAll<HTMLElement>(".wiki-copilot-message-label")) {
+      const message = label.parentElement;
+      if (message?.hasClass("is-user")) label.setText(this.plugin.t("view.user"));
+      else if (message?.hasClass("wiki-copilot-loading") || message?.hasClass("is-streaming")) label.setText(this.plugin.t("view.title"));
+      else if (message?.hasClass("is-status")) label.setText(this.plugin.t("view.stopped"));
+      else if (message?.hasClass("is-error")) label.setText(this.plugin.t(message.dataset.errorKind === "timeout" ? "view.timeout" : "view.failed"));
+      else if (message?.dataset.messageKind === "retrieval") label.setText(this.plugin.t("view.localRetrieval"));
+      else label.setText(this.plugin.t("view.title"));
+    }
+    for (const badge of this.chatEl.querySelectorAll<HTMLElement>(".wiki-copilot-general-answer-badge")) {
+      badge.setText(this.plugin.t("view.generalAnswer"));
+      badge.setAttribute("title", this.plugin.t("view.generalAnswerTitle"));
+    }
+    for (const role of this.chatEl.querySelectorAll<HTMLElement>(".wiki-copilot-role")) {
+      const sourceRole = role.dataset.role as SourceReference["role"] | undefined;
+      if (sourceRole) role.setText(this.roleLabel(sourceRole));
+    }
+    for (const origin of this.chatEl.querySelectorAll<HTMLElement>(".wiki-copilot-origin")) origin.setText(this.plugin.t("view.wikiLink"));
+    for (const details of this.chatEl.querySelectorAll<HTMLDetailsElement>(".wiki-copilot-sources")) {
+      details.querySelector("summary")?.setText(this.plugin.t("view.sources", { count: details.querySelectorAll(".wiki-copilot-source").length }));
+    }
+    for (const source of this.chatEl.querySelectorAll<HTMLButtonElement>(".wiki-copilot-source")) {
+      const id = source.dataset.sourceId;
+      const title = source.querySelector(".wiki-copilot-source-title")?.textContent ?? "";
+      if (id) source.setAttribute("aria-label", this.plugin.t("view.openSource", { id, title }));
+    }
+    for (const citation of this.chatEl.querySelectorAll<HTMLAnchorElement>(".wiki-copilot-citation")) {
+      const id = citation.dataset.sourceId;
+      const title = citation.dataset.sourceTitle;
+      if (id && title) citation.setAttribute("aria-label", this.plugin.t("view.openSource", { id, title }));
     }
   }
 
@@ -131,23 +177,26 @@ export class WikiCopilotView extends ItemView {
 
     const header = container.createDiv({ cls: "wiki-copilot-header" });
     const titleGroup = header.createDiv({ cls: "wiki-copilot-title-group" });
-    titleGroup.createEl("h2", { text: "Wiki Copilot" });
+    titleGroup.createEl("h2", { text: this.plugin.t("view.title") });
     this.statusEl = titleGroup.createDiv({ cls: "wiki-copilot-status wiki-copilot-header-status" });
 
     const actions = header.createDiv({ cls: "wiki-copilot-header-actions" });
     const rebuild = actions.createEl("button", {
       cls: "clickable-icon",
-      attr: { "aria-label": "重建知识索引" }
+      attr: { "aria-label": this.plugin.t("view.rebuild") }
     });
     setIcon(rebuild, "refresh-cw");
     this.registerDomEvent(rebuild, "click", () => void this.plugin.rebuildIndex());
 
     const clear = actions.createEl("button", {
       cls: "clickable-icon",
-      attr: { "aria-label": "新对话" }
+      attr: { "aria-label": this.plugin.t("view.newConversation") }
     });
     setIcon(clear, "square-pen");
-    this.registerDomEvent(clear, "click", () => this.clearConversation());
+    this.registerDomEvent(clear, "click", () => this.startNewConversation());
+
+    this.historyEl = container.createDiv({ cls: "wiki-copilot-history" });
+    void this.renderConversationHistory();
 
     this.chatEl = container.createDiv({ cls: "wiki-copilot-chat" });
     this.registerDomEvent(this.chatEl, "pointerdown", (event) => {
@@ -162,7 +211,7 @@ export class WikiCopilotView extends ItemView {
       cls: "wiki-copilot-input",
       attr: {
         rows: Platform.isMobile ? "1" : "3",
-        placeholder: "询问当前知识库…"
+        placeholder: this.plugin.t("composer.placeholder")
       }
     });
     this.registerDomEvent(this.queryEl, "keydown", (event) => {
@@ -186,9 +235,9 @@ export class WikiCopilotView extends ItemView {
     this.startMobileViewportTracking(container);
 
     const controls = composer.createDiv({ cls: "wiki-copilot-composer-controls" });
-    controls.createSpan({ cls: "wiki-copilot-shortcut", text: "Enter 发送 · Shift + Enter 换行" });
+    controls.createSpan({ cls: "wiki-copilot-shortcut", text: this.plugin.t("composer.shortcut") });
     const buttons = controls.createDiv({ cls: "wiki-copilot-composer-buttons" });
-    this.askButton = buttons.createEl("button", { cls: "mod-cta", text: "发送" });
+    this.askButton = buttons.createEl("button", { cls: "mod-cta", text: this.plugin.t("composer.send") });
     this.registerDomEvent(this.askButton, "mousedown", (event) => {
       if (Platform.isMobile) {
         // Keep the textarea focused until click fires so iOS cannot move the
@@ -209,26 +258,27 @@ export class WikiCopilotView extends ItemView {
     const welcome = this.chatEl.createDiv({ cls: "wiki-copilot-welcome" });
     const icon = welcome.createDiv({ cls: "wiki-copilot-welcome-icon" });
     setIcon(icon, "message-circle");
-    welcome.createEl("h3", { text: "向 Wiki 提问" });
+    welcome.createEl("h3", { text: this.plugin.t("welcome.title") });
     welcome.createEl("p", {
-      text: "输入问题，开始与你的知识库对话。"
+      text: this.plugin.t("welcome.description")
     });
     if (!this.plugin.isModelConfigured()) {
       welcome.createEl("p", {
         cls: "wiki-copilot-callout",
-        text: "模型尚未完整配置。直接提问会显示本地检索结果；配置服务商、模型和 API Key 后会自动生成回答。"
+        text: this.plugin.t("welcome.unconfigured")
       });
     }
   }
 
   private renderStatus(status: IndexStatus): void {
+    this.lastStatus = status;
     if (!this.statusEl) {
       return;
     }
     this.statusEl.empty();
     const dot = this.statusEl.createSpan({ cls: `wiki-copilot-status-dot is-${status.state}` });
     dot.setAttribute("aria-hidden", "true");
-    this.statusEl.createSpan({ text: status.state === "ready" ? "索引就绪" : status.message });
+    this.statusEl.createSpan({ text: this.plugin.localizedIndexStatus(status) });
     const profile = this.plugin.indexCoordinator.profile;
     if (profile && profile.warnings.length > 0) {
       const warning = this.statusEl.createEl("button", {
@@ -239,11 +289,12 @@ export class WikiCopilotView extends ItemView {
     }
   }
 
-  private clearConversation(): void {
+  private startNewConversation(): void {
     this.activeRequest?.abort();
     this.activeRequest = null;
     this.requestSequence += 1;
     this.turns = [];
+    this.conversation = null;
     this.resetConversationComponent();
     this.chatEl.empty();
     this.renderWelcome();
@@ -252,14 +303,85 @@ export class WikiCopilotView extends ItemView {
     this.setBusy(false);
   }
 
+  private async renderConversationHistory(): Promise<void> {
+    if (!this.historyEl) return;
+    this.historyEl.empty();
+    const history = this.historyEl.createEl("details");
+    history.createEl("summary", { text: this.plugin.t("view.history") });
+    try {
+      const conversations = await this.plugin.conversations.list(this.plugin.settings.conversationFolder);
+      if (conversations.length === 0) {
+        history.createDiv({ cls: "wiki-copilot-history-empty", text: this.plugin.t("view.historyEmpty") });
+        return;
+      }
+      const list = history.createDiv({ cls: "wiki-copilot-history-list" });
+      for (const stored of conversations) {
+        const button = list.createEl("button", {
+          cls: "wiki-copilot-history-item",
+          text: stored.conversation.title,
+          attr: { "aria-label": this.plugin.t("view.openConversation", { title: stored.conversation.title }) }
+        });
+        this.registerDomEvent(button, "click", () => void this.openConversation(stored.path));
+      }
+    } catch (error) {
+      console.error("Wiki Copilot: failed to list conversations.", error);
+      history.createDiv({ cls: "wiki-copilot-history-error", text: this.plugin.t("view.historyLoadFailed") });
+    }
+  }
+
+  private async openConversation(path: string): Promise<void> {
+    try {
+      const conversation = await this.plugin.conversations.load(path);
+      if (!conversation) {
+        new Notice(this.plugin.t("view.historyLoadFailed"));
+        return;
+      }
+      this.activeRequest?.abort();
+      this.activeRequest = null;
+      this.requestSequence += 1;
+      this.conversation = conversation;
+      this.turns = conversation.turns.map((turn) => ({ ...turn }));
+      this.renderConversationTurns();
+    } catch (error) {
+      console.error("Wiki Copilot: failed to open conversation.", error);
+      new Notice(this.plugin.t("view.historyLoadFailed"));
+    }
+  }
+
+  private renderConversationTurns(): void {
+    this.resetConversationComponent();
+    this.chatEl.empty();
+    for (const turn of this.conversation?.turns ?? []) {
+      if (turn.role === "user") this.appendUserMessage(turn.content);
+      else {
+        const state = assistantRenderState(turn);
+        void this.appendAssistantMessage(turn.content, state.sources, state.knowledgeBaseHit);
+      }
+    }
+    this.queryEl.value = "";
+    this.resetComposerHeight();
+    this.setBusy(false);
+  }
+
+  private async saveConversation(): Promise<void> {
+    if (!this.conversation?.turns.length) return;
+    try {
+      await this.plugin.conversations.save(this.plugin.settings.conversationFolder, this.conversation);
+      void this.renderConversationHistory();
+    } catch (error) {
+      console.error("Wiki Copilot: failed to save conversation.", error);
+      new Notice(this.plugin.t("view.historySaveFailed"));
+    }
+  }
+
   private async ask(): Promise<void> {
     if (this.busy) {
-      new Notice("上一条问题仍在处理中。你可以先编辑下一条问题。 ");
+      new Notice(this.plugin.t("view.busy"));
       return;
     }
     const question = this.queryEl.value.trim();
     if (!question) {
-      new Notice("请输入问题。 ");
+      new Notice(this.plugin.t("view.emptyQuestion"));
       return;
     }
     const history = [...this.turns];
@@ -285,7 +407,7 @@ export class WikiCopilotView extends ItemView {
     if (useModel) {
       this.turns.push({ role: "user", content: question });
     }
-    const loading = this.appendLoading("正在准备本地检索…");
+    const loading = this.appendLoading(this.plugin.t("view.preparing"));
     let waitingForFirstContent = true;
     const streamState: {
       markdown: string;
@@ -338,8 +460,8 @@ export class WikiCopilotView extends ItemView {
           activeResponseMode = mode;
           if (!detail) {
             updateProgress(mode === "stream"
-              ? "正在连接模型…"
-              : "正在等待模型回答…");
+              ? this.plugin.t("view.connecting")
+              : this.plugin.t("view.waiting"));
           }
         },
         onModelActivity: (activity) => {
@@ -348,10 +470,10 @@ export class WikiCopilotView extends ItemView {
           }
           if (activity === "response-headers") {
             updateProgress(activeResponseMode === "stream"
-              ? "模型已连接，等待回答…"
-              : "模型已响应，正在读取回答…");
+              ? this.plugin.t("view.connected")
+              : this.plugin.t("view.reading"));
           } else {
-            updateProgress("正在接收回答…");
+            updateProgress(this.plugin.t("view.receiving"));
           }
         },
         onDelta: (delta) => {
@@ -385,6 +507,23 @@ export class WikiCopilotView extends ItemView {
         );
       }
       this.turns.push({ role: "assistant", content: answer.markdown });
+      const now = new Date().toISOString();
+      this.conversation ??= {
+        id: this.newConversationId(),
+        createdAt: now,
+        updatedAt: now,
+        title: question.slice(0, 80),
+        turns: []
+      };
+      this.conversation.turns.push({ role: "user", content: question });
+      this.conversation.turns.push({
+        role: "assistant",
+        content: answer.markdown,
+        sources: answer.sources,
+        knowledgeBaseHit: answer.knowledgeBaseHit
+      });
+      this.conversation.updatedAt = now;
+      await this.saveConversation();
     } catch (error) {
       if (sequence === this.requestSequence) {
         const lastTurn = this.turns.at(-1);
@@ -398,7 +537,7 @@ export class WikiCopilotView extends ItemView {
             await streamState.message.interrupt(
               streamState.markdown,
               sources,
-              "回答已停止；部分内容未加入会话上下文。"
+              this.plugin.t("view.stoppedPartial")
             );
           } else {
             this.appendStoppedMessage();
@@ -407,12 +546,14 @@ export class WikiCopilotView extends ItemView {
           await streamState.message.interrupt(
             streamState.markdown,
             sources,
-            `回答中断：${error instanceof Error ? error.message : String(error)} 部分内容未加入会话上下文。`
+            this.plugin.t("view.interrupted", {
+              message: localizeModelError(this.plugin.t.bind(this.plugin), error)
+            })
           );
         } else if (error instanceof StreamFallbackRequiredError) {
           let errorContainer: HTMLElement | null = null;
           errorContainer = this.appendError(error, {
-            label: "使用兼容模式重试",
+            label: this.plugin.t("view.retryCompatibility"),
             action: () => {
               errorContainer?.remove();
               void this.runQuestion(question, history, {
@@ -437,14 +578,14 @@ export class WikiCopilotView extends ItemView {
 
   private appendUserMessage(text: string): void {
     const message = this.chatEl.createDiv({ cls: "wiki-copilot-message is-user" });
-    message.createDiv({ cls: "wiki-copilot-message-label", text: "你" });
+    message.createDiv({ cls: "wiki-copilot-message-label", text: this.plugin.t("view.user") });
     message.createDiv({ cls: "wiki-copilot-message-body", text });
     this.scrollToBottom();
   }
 
   private appendLoading(text: string): { remove: () => void; setText: (value: string) => void } {
     const message = this.chatEl.createDiv({ cls: "wiki-copilot-message is-assistant wiki-copilot-loading" });
-    message.createDiv({ cls: "wiki-copilot-message-label", text: "Wiki Copilot" });
+    message.createDiv({ cls: "wiki-copilot-message-label", text: this.plugin.t("view.title") });
     const body = message.createDiv({ cls: "wiki-copilot-message-body" });
     body.createSpan({ cls: "wiki-copilot-spinner" });
     const label = body.createSpan({ text });
@@ -474,12 +615,12 @@ export class WikiCopilotView extends ItemView {
     const initiallyPinned = this.isNearBottom();
     const message = this.chatEl.createDiv({ cls: "wiki-copilot-message is-assistant" });
     message.addClass("is-streaming");
-    const label = message.createDiv({ cls: "wiki-copilot-message-label", text: "Wiki Copilot" });
+    const label = message.createDiv({ cls: "wiki-copilot-message-label", text: this.plugin.t("view.title") });
     if (!knowledgeBaseHit) {
       label.createSpan({
         cls: "wiki-copilot-general-answer-badge",
-        text: " · 通用回答",
-        attr: { title: "未命中当前知识库，此回答来自模型通用知识" }
+        text: this.plugin.t("view.generalAnswer"),
+        attr: { title: this.plugin.t("view.generalAnswerTitle") }
       });
     }
     const body = message.createDiv({ cls: "wiki-copilot-message-body markdown-rendered" });
@@ -538,18 +679,18 @@ export class WikiCopilotView extends ItemView {
 
   private appendRetrievalResult(result: RetrievalResult): void {
     const keepPinned = this.isNearBottom();
-    const message = this.chatEl.createDiv({ cls: "wiki-copilot-message is-assistant" });
-    message.createDiv({ cls: "wiki-copilot-message-label", text: "本地检索" });
+    const message = this.chatEl.createDiv({ cls: "wiki-copilot-message is-assistant", attr: { "data-message-kind": "retrieval" } });
+    message.createDiv({ cls: "wiki-copilot-message-label", text: this.plugin.t("view.localRetrieval") });
     const body = message.createDiv({ cls: "wiki-copilot-message-body" });
     if (result.chunks.length === 0) {
-      body.setText("没有找到可用片段。可尝试更具体的术语，或检查 Vault 中是否存在 Wiki 知识层。 ");
+      body.setText(this.plugin.t("view.noChunks"));
       if (keepPinned) {
         this.scrollToBottom();
       }
       return;
     }
     body.createEl("p", {
-      text: `选出 ${result.chunks.length} 个上下文片段（候选 ${result.totalCandidates} 个${result.truncated ? "，受上下文上限截断" : ""}）。`
+      text: this.plugin.t("view.selectedChunks", { count: result.chunks.length, candidates: result.totalCandidates, truncated: result.truncated ? this.plugin.t("view.truncated") : "" })
     });
     const sources = sourceReferencesFromRetrieval(result);
     this.renderSources(body, sources, result);
@@ -567,19 +708,19 @@ export class WikiCopilotView extends ItemView {
       return;
     }
     const details = container.createEl("details", { cls: "wiki-copilot-sources" });
-    details.createEl("summary", { text: `来源与检索依据（${sources.length}）` });
+    details.createEl("summary", { text: this.plugin.t("view.sources", { count: sources.length }) });
     const list = details.createDiv({ cls: "wiki-copilot-source-list" });
 
     sources.forEach((source, index) => {
       const sourceButton = list.createEl("button", {
         cls: "wiki-copilot-source",
-        attr: { "data-source-id": source.id }
+        attr: { "data-source-id": source.id, "aria-label": this.plugin.t("view.openSource", { id: source.id, title: source.title }) }
       });
       const top = sourceButton.createDiv({ cls: "wiki-copilot-source-top" });
       top.createSpan({ cls: "wiki-copilot-source-id", text: `[${source.id}]` });
-      top.createSpan({ cls: `wiki-copilot-role is-${source.role}`, text: ROLE_LABELS[source.role] });
+      top.createSpan({ cls: `wiki-copilot-role is-${source.role}`, text: this.roleLabel(source.role), attr: { "data-role": source.role } });
       if (source.origin === "wikilink") {
-        top.createSpan({ cls: "wiki-copilot-origin", text: "Wikilink" });
+        top.createSpan({ cls: "wiki-copilot-origin", text: this.plugin.t("view.wikiLink") });
       }
       sourceButton.createDiv({ cls: "wiki-copilot-source-title", text: source.title });
       sourceButton.createDiv({
@@ -608,7 +749,9 @@ export class WikiCopilotView extends ItemView {
         continue;
       }
       link.addClass("wiki-copilot-citation");
-      link.setAttribute("aria-label", `打开来源 ${id}：${source.title}`);
+      link.dataset.sourceId = id;
+      link.dataset.sourceTitle = source.title;
+      link.setAttribute("aria-label", this.plugin.t("view.openSource", { id, title: source.title }));
       this.registerDomEvent(link, "click", (event) => {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -649,7 +792,7 @@ export class WikiCopilotView extends ItemView {
     const { path, subpath } = parseLinktext(citationTarget(source));
     const file = this.app.metadataCache.getFirstLinkpathDest(path, "");
     if (!file) {
-      new Notice(`找不到引用文档：${source.path}`);
+      new Notice(this.plugin.t("view.sourceMissing", { path: source.path }));
       return;
     }
 
@@ -657,17 +800,17 @@ export class WikiCopilotView extends ItemView {
       await this.plugin.openCitation(file, subpath);
     } catch (error) {
       console.error("Wiki Copilot failed to open citation", error);
-      new Notice("无法打开引用文档。");
+      new Notice(this.plugin.t("view.sourceOpenFailed"));
     }
   }
 
   private appendStoppedMessage(): void {
     const keepPinned = this.isNearBottom();
     const container = this.chatEl.createDiv({ cls: "wiki-copilot-message is-status" });
-    container.createDiv({ cls: "wiki-copilot-message-label", text: "已停止" });
+    container.createDiv({ cls: "wiki-copilot-message-label", text: this.plugin.t("view.stopped") });
     container.createDiv({
       cls: "wiki-copilot-message-body",
-      text: "回答已停止，未生成可加入会话上下文的内容。"
+      text: this.plugin.t("view.stoppedEmpty")
     });
     if (keepPinned) {
       this.scrollToBottom();
@@ -680,18 +823,18 @@ export class WikiCopilotView extends ItemView {
   ): HTMLElement {
     const keepPinned = this.isNearBottom();
     const isTimeout = error instanceof AnswerTimeoutError;
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const container = this.chatEl.createDiv({ cls: "wiki-copilot-message is-error" });
+    const errorMessage = localizeModelError(this.plugin.t.bind(this.plugin), error);
+    const container = this.chatEl.createDiv({ cls: "wiki-copilot-message is-error", attr: { "data-error-kind": isTimeout ? "timeout" : "failed" } });
     container.createDiv({
       cls: "wiki-copilot-message-label",
-      text: isTimeout ? "回答超时" : "无法完成"
+      text: isTimeout ? this.plugin.t("view.timeout") : this.plugin.t("view.failed")
     });
     const body = container.createDiv({ cls: "wiki-copilot-message-body" });
     body.createDiv({ text: errorMessage });
     if (isTimeout && error.retrieval.chunks.length > 0) {
       body.createEl("p", {
         cls: "wiki-copilot-timeout-sources-note",
-        text: `本次检索到的 ${error.retrieval.chunks.length} 个知识页面已保留，可展开查看。`
+        text: this.plugin.t("view.timeoutSources", { count: error.retrieval.chunks.length })
       });
       this.renderSources(
         body,
@@ -713,8 +856,8 @@ export class WikiCopilotView extends ItemView {
   private setBusy(busy: boolean): void {
     this.busy = busy;
     this.askButton.disabled = false;
-    this.askButton.setText(busy ? "停止" : "发送");
-    this.askButton.setAttribute("aria-label", busy ? "停止当前回答" : "发送问题");
+    this.askButton.setText(busy ? this.plugin.t("composer.stop") : this.plugin.t("composer.send"));
+    this.askButton.setAttribute("aria-label", busy ? this.plugin.t("composer.stopAria") : this.plugin.t("composer.sendAria"));
     if (busy) {
       this.askButton.addClass("wiki-copilot-stop-button");
     } else {
@@ -904,7 +1047,7 @@ export class WikiCopilotView extends ItemView {
     }
     this.activeRequest.abort();
     this.askButton.disabled = true;
-    this.askButton.setText("正在停止…");
+    this.askButton.setText(this.plugin.t("composer.stopping"));
   }
 
   private ensureConversationComponent(): Component {
@@ -927,5 +1070,16 @@ export class WikiCopilotView extends ItemView {
 
   private yieldToPaint(): Promise<void> {
     return yieldToUi(this.viewWindow());
+  }
+
+  private newConversationId(): string {
+    return typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  private roleLabel(role: SourceReference["role"]): string {
+    const key = role === "stable-source" || role === "pending-source" ? "role.source" : `role.${role}` as const;
+    return this.plugin.t(key);
   }
 }

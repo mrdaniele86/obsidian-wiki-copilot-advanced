@@ -13,6 +13,8 @@ import {
   providerModels
 } from "./model-presets";
 import type { ModelProvider } from "./model-presets";
+import { isUiLanguage } from "./i18n";
+import type { UiLanguage } from "./i18n";
 
 export type RetrievalMode = "precise" | "fast";
 
@@ -26,6 +28,8 @@ export interface ModelSettings {
 }
 
 export interface WikiCopilotSettings {
+  language: UiLanguage;
+  conversationFolder: string;
   autoDetectProfile: boolean;
   profile: KnowledgeProfileConfig;
   retrievalMode: RetrievalMode;
@@ -36,6 +40,8 @@ export interface WikiCopilotSettings {
 }
 
 export const DEFAULT_SETTINGS: WikiCopilotSettings = {
+  language: "auto",
+  conversationFolder: "Memory Copilot/Conversations",
   autoDetectProfile: true,
   profile: {
     ...DEFAULT_PROFILE_CONFIG,
@@ -88,6 +94,10 @@ function stringArray(value: unknown, fallback: string[]): string[] {
 
 export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
   const raw = data && typeof data === "object" ? data as Partial<WikiCopilotSettings> : {};
+  const language = isUiLanguage(raw.language) ? raw.language : DEFAULT_SETTINGS.language;
+  const conversationFolder = typeof raw.conversationFolder === "string" && raw.conversationFolder.trim()
+    ? raw.conversationFolder.trim()
+    : DEFAULT_SETTINGS.conversationFolder;
   const rawProfile: Partial<KnowledgeProfileConfig> = raw.profile && typeof raw.profile === "object" ? raw.profile : {};
   const rawModel: Partial<ModelSettings> = raw.model && typeof raw.model === "object" ? raw.model : {};
   const savedEndpoint = typeof rawModel.endpoint === "string" ? rawModel.endpoint.trim() : "";
@@ -104,6 +114,8 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
   const retrievalSettings = retrievalSettingsForMode(retrievalMode);
 
   return {
+    language,
+    conversationFolder,
     autoDetectProfile: true,
     profile: {
       schemaFiles: stringArray(rawProfile.schemaFiles, DEFAULT_SETTINGS.profile.schemaFiles),
@@ -139,6 +151,8 @@ export function legacyApiKeySecretName(data: unknown): string {
 }
 
 type WikiCopilotSettingKey =
+  | "language"
+  | "conversationFolder"
   | "provider"
   | "serviceName"
   | "endpoint"
@@ -151,57 +165,76 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
   }
 
   override getSettingDefinitions(): SettingDefinitionItem<WikiCopilotSettingKey>[] {
+    const t = this.plugin.t.bind(this.plugin);
     const provider = this.plugin.settings.model.provider;
     const selectedModel = this.plugin.settings.model.model;
     const modelOptions = Object.fromEntries(
       providerModels(provider).map((option) => [option.id, option.label])
     );
     if (selectedModel && !(selectedModel in modelOptions)) {
-      modelOptions[selectedModel] = `${selectedModel}（当前配置）`;
+      modelOptions[selectedModel] = t("settings.model.current", { model: selectedModel });
     }
 
     return [
       {
+        type: "group",
+        heading: t("settings.interface.heading"),
+        items: [{
+          name: t("settings.interface.language.name"),
+          desc: t("settings.interface.language.desc"),
+          control: { type: "dropdown", key: "language", options: {
+            auto: t("language.auto"), it: t("language.it"),
+            en: t("language.en"), zh: t("language.zh")
+          } }
+        }]
+      },
+      {
+        type: "group",
+        heading: t("settings.conversation.heading"),
+        items: [{
+          name: t("settings.conversation.folder.name"),
+          desc: t("settings.conversation.folder.desc"),
+          control: { type: "text", key: "conversationFolder", placeholder: DEFAULT_SETTINGS.conversationFolder }
+        }]
+      },
+      {
         name: "Wiki Copilot",
-        desc: "面向 LLM Wiki 的知识库问答插件，支持精准检索与来源引用。",
+        desc: t("settings.intro"),
         render: (setting) => {
           setting
             .setClass("wiki-copilot-settings-intro")
             .setName("Wiki Copilot")
-            .setDesc("面向 LLM Wiki 的知识库问答插件，支持精准检索与来源引用。")
+            .setDesc(t("settings.intro"))
             .setHeading();
         }
       },
       {
         type: "group",
-        heading: "模型服务",
+        heading: t("settings.model.heading"),
         items: [
           {
-            name: "服务商",
-            desc: "选择后自动配置兼容接口地址和常用模型。",
+            name: t("settings.provider.name"), desc: t("settings.provider.desc"),
             control: {
               type: "dropdown",
               key: "provider",
               options: {
                 deepseek: "DeepSeek",
                 openai: "OpenAI",
-                custom: "其他 OpenAI 兼容服务"
+                custom: t("settings.provider.custom")
               }
             }
           },
           {
-            name: "服务名称",
-            desc: "用于回答等待提示，例如“硅基流动思考中…”。",
+            name: t("settings.service.name"), desc: t("settings.service.desc"),
             visible: () => this.plugin.settings.model.provider === "custom",
             control: {
               type: "text",
               key: "serviceName",
-              placeholder: "例如：硅基流动"
+              placeholder: t("settings.service.placeholder")
             }
           },
           {
-            name: "接口地址",
-            desc: "填写 API 根地址，或完整的 /chat/completions 地址。",
+            name: t("settings.endpoint.name"), desc: t("settings.endpoint.desc"),
             visible: () => this.plugin.settings.model.provider === "custom",
             control: {
               type: "text",
@@ -211,17 +244,15 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
           },
           provider === "custom"
             ? {
-              name: "模型",
-              desc: "填写服务商提供的模型 ID。",
+              name: t("settings.model.name"), desc: t("settings.model.custom.desc"),
               control: {
                 type: "text",
                 key: "model",
-                placeholder: "模型 ID"
+                placeholder: t("settings.model.placeholder")
               }
             }
             : {
-              name: "模型",
-              desc: `接口地址自动使用 ${MODEL_PROVIDER_PRESETS[provider].endpoint}`,
+              name: t("settings.model.name"), desc: t("settings.model.endpoint", { endpoint: MODEL_PROVIDER_PRESETS[provider].endpoint }),
               control: {
                 type: "dropdown",
                 key: "model",
@@ -229,17 +260,16 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
               }
             },
           {
-            name: "API key",
-            desc: "密钥保存在 Obsidian 安全存储中，不写入插件设置文件。",
+            name: t("settings.apiKey.name"), desc: t("settings.apiKey.desc"),
             render: (setting) => {
               setting
-                .setName("API key")
-                .setDesc("密钥保存在 Obsidian 安全存储中，不写入插件设置文件。")
+                .setName(t("settings.apiKey.name"))
+                .setDesc(t("settings.apiKey.desc"))
                 .addText((text) => {
                   text.inputEl.type = "password";
                   text.inputEl.autocomplete = "off";
                   return text
-                    .setPlaceholder(provider === "custom" ? "可留空（本地服务）" : "请输入 API key")
+                    .setPlaceholder(provider === "custom" ? t("settings.apiKey.local") : t("settings.apiKey.placeholder"))
                     .setValue(this.plugin.getApiKey() ?? "")
                     .onChange(async (value) => {
                       await this.plugin.setApiKey(value);
@@ -251,17 +281,15 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
-        heading: "知识检索",
+        heading: t("settings.retrieval.heading"),
         items: [
           {
-            name: "检索模式",
-            desc: "精准扫描全部 Markdown；快速搜索已整理 Wiki。",
+            name: t("settings.retrieval.name"), desc: t("settings.retrieval.desc"),
             control: {
               type: "dropdown",
               key: "retrievalMode",
               options: {
-                precise: "精准（推荐）",
-                fast: "快速"
+                precise: t("settings.retrieval.precise"), fast: t("settings.retrieval.fast")
               }
             }
           }
@@ -272,6 +300,8 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
 
   override getControlValue(key: WikiCopilotSettingKey): unknown {
     switch (key) {
+      case "language": return this.plugin.settings.language;
+      case "conversationFolder": return this.plugin.settings.conversationFolder;
       case "provider":
         return this.plugin.settings.model.provider;
       case "serviceName":
@@ -287,6 +317,14 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
 
   override async setControlValue(key: WikiCopilotSettingKey, value: unknown): Promise<void> {
     switch (key) {
+      case "language":
+        if (!isUiLanguage(value)) return;
+        this.plugin.settings.language = value;
+        break;
+      case "conversationFolder":
+        if (typeof value !== "string" || !value.trim()) return;
+        this.plugin.settings.conversationFolder = value.trim();
+        break;
       case "provider":
         if (!isModelProvider(value)) {
           return;
@@ -325,5 +363,8 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
         break;
     }
     await this.plugin.saveSettings();
+    if (key === "language") {
+      this.update();
+    }
   }
 }

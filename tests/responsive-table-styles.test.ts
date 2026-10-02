@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8")
+  .replace(/\r\n/gu, "\n");
 
 function ruleBody(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");

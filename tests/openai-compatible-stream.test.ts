@@ -6,10 +6,11 @@ vi.mock("obsidian", () => ({
 
 import type { BuiltContext } from "../src/core/context-builder";
 import {
+  type ModelResponseDetail,
+  ModelStreamInterruptedError,
   OpenAICompatibleClient,
   StreamFallbackRequiredError
 } from "../src/llm/openai-compatible";
-import { ChatCompletionStreamInterruptedError } from "../src/llm/chat-completion-stream";
 import { RequestCancelledError, RequestTimeoutError } from "../src/llm/request-timeout";
 import type { ModelSettings } from "../src/settings";
 
@@ -344,13 +345,50 @@ describe("OpenAICompatibleClient streaming", () => {
     ));
     const requester = vi.fn(async () => nonStreamingResponse());
     const client = new OpenAICompatibleClient(() => null, { fetcher, requester, timerHost: timerHost() });
-    const modes: string[] = [];
+    const modes: Array<{ mode: string; detail?: ModelResponseDetail }> = [];
 
     await expect(client.answer("问题", context, [], "", settings(), 90_000, {
-      onResponseMode: (mode) => modes.push(mode)
+      onResponseMode: (mode, detail) => modes.push({ mode, detail })
     })).resolves.toBe("兼容回答");
-    expect(modes).toEqual(["stream", "non-stream"]);
+    expect(modes).toEqual([
+      { mode: "stream" },
+      { mode: "non-stream", detail: "streaming-unsupported" }
+    ]);
     expect(requester).toHaveBeenCalledOnce();
+  });
+
+  it("reports request failures with a semantic code and provider detail", async () => {
+    const requester = vi.fn(async () => ({
+      ...nonStreamingResponse(),
+      status: 429,
+      json: { error: { message: "rate limit exceeded" } },
+      text: JSON.stringify({ error: { message: "rate limit exceeded" } })
+    }));
+    const client = new OpenAICompatibleClient(() => null, {
+      fetcher: null,
+      requester,
+      timerHost: timerHost()
+    });
+
+    await expect(client.answer("question", context, [], "", settings(), 90_000))
+      .rejects.toMatchObject({
+        code: "request-failed",
+        detail: "rate limit exceeded"
+      });
+  });
+
+  it("reports stream completion warnings as semantic codes", async () => {
+    const fetcher = vi.fn(async () => new Response(responseStream([
+      "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":\"length\"}]}\n\n",
+      "data: [DONE]\n\n"
+    ]), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+    const warnings: string[] = [];
+    const client = new OpenAICompatibleClient(() => null, { fetcher, timerHost: timerHost() });
+
+    await expect(client.answer("question", context, [], "", settings(), 90_000, {
+      onWarning: (warning) => warnings.push(warning)
+    })).resolves.toBe("partial");
+    expect(warnings).toEqual(["length"]);
   });
 
   it("does not silently resend an ambiguous failed fetch", async () => {
@@ -457,11 +495,14 @@ describe("OpenAICompatibleClient streaming", () => {
     const requester = vi.fn(async () => nonStreamingResponse());
     const client = new OpenAICompatibleClient(() => null, { fetcher, requester, timerHost: timerHost() });
 
-    await expect(client.answer("问题", context, [], "", settings(), 90_000))
+    const answer = client.answer("问题", context, [], "", settings(), 90_000);
+    await expect(answer).rejects.toBeInstanceOf(ModelStreamInterruptedError);
+    await expect(answer)
       .rejects.toMatchObject({
         name: "ChatCompletionStreamInterruptedError",
+        reason: "stream-interrupted",
         partialText: "部分"
-      } satisfies Partial<ChatCompletionStreamInterruptedError>);
+      } satisfies Partial<ModelStreamInterruptedError>);
     expect(requester).not.toHaveBeenCalled();
   });
 });

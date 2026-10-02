@@ -47,6 +47,8 @@ const profile: KnowledgeProfile = {
 };
 
 const settings: WikiCopilotSettings = {
+  language: "auto",
+  conversationFolder: "Memory Copilot/Conversations",
   autoDetectProfile: true,
   profile,
   retrievalMode: "fast",
@@ -394,8 +396,8 @@ describe("cached index startup", () => {
       expect(preciseResult.chunks[0]?.path).toBe(sourcePath);
       expect(preciseResult.chunks[0]?.text).toContain("0.8W");
       expect(adapter.list).toHaveBeenCalledWith("raw/processed");
-      expect(progressMessages).toContain("正在扫描全部 Markdown…");
-      expect(progressMessages).toContain("正在提取相关段落…");
+      expect(progressMessages).toContain("scanning");
+      expect(progressMessages).toContain("extracting");
       expect(progressMessages.some((message) => /\d+\/\d+/u.test(message))).toBe(false);
     } finally {
       coordinator.destroy();

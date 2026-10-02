@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prepare the Wiki Copilot Advanced fork for the `2.1.1-beta.1` BRAT beta release.
+
 ## 2.1.0
 
 - 精简设置页顶部简介与检索模式说明，保留知识库问答、来源引用及精准/快速模式的核心差异

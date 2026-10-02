@@ -549,7 +549,11 @@ export class OpenAICompatibleClient {
         throw error;
       }
       if (error instanceof ChatCompletionStreamInterruptedError && error.partialText) {
-        throw error;
+        throw new ModelStreamInterruptedError(
+          "stream-interrupted",
+          error.partialText,
+          { cause: error }
+        );
       }
       if (receivedText) {
         throw new ModelStreamInterruptedError(

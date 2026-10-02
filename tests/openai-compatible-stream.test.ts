@@ -7,10 +7,10 @@ vi.mock("obsidian", () => ({
 import type { BuiltContext } from "../src/core/context-builder";
 import {
   type ModelResponseDetail,
+  ModelStreamInterruptedError,
   OpenAICompatibleClient,
   StreamFallbackRequiredError
 } from "../src/llm/openai-compatible";
-import { ChatCompletionStreamInterruptedError } from "../src/llm/chat-completion-stream";
 import { RequestCancelledError, RequestTimeoutError } from "../src/llm/request-timeout";
 import type { ModelSettings } from "../src/settings";
 
@@ -495,11 +495,14 @@ describe("OpenAICompatibleClient streaming", () => {
     const requester = vi.fn(async () => nonStreamingResponse());
     const client = new OpenAICompatibleClient(() => null, { fetcher, requester, timerHost: timerHost() });
 
-    await expect(client.answer("问题", context, [], "", settings(), 90_000))
+    const answer = client.answer("问题", context, [], "", settings(), 90_000);
+    await expect(answer).rejects.toBeInstanceOf(ModelStreamInterruptedError);
+    await expect(answer)
       .rejects.toMatchObject({
         name: "ChatCompletionStreamInterruptedError",
+        reason: "stream-interrupted",
         partialText: "部分"
-      } satisfies Partial<ChatCompletionStreamInterruptedError>);
+      } satisfies Partial<ModelStreamInterruptedError>);
     expect(requester).not.toHaveBeenCalled();
   });
 });

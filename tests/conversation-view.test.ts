@@ -19,6 +19,14 @@ describe("persistent conversation view", () => {
     expect(viewSource).toContain("openConversation(path: string)");
     expect(viewSource).toContain("await this.plugin.conversations.load(path)");
     expect(viewSource).toContain("this.renderConversationTurns()");
+    expect(viewSource).toContain("history.open = false");
+  });
+
+  it("offers localized, confirmed deletion from each history item", () => {
+    expect(viewSource).toContain('this.plugin.t("view.deleteConversation"');
+    expect(viewSource).toContain('this.plugin.t("view.deleteConversationConfirm"');
+    expect(viewSource).toContain("await this.plugin.conversations.delete(path)");
+    expect(viewSource).toContain("void this.renderConversationHistory()");
   });
 
   it("persists only complete model exchanges", () => {

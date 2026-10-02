@@ -60,10 +60,10 @@ export const DEFAULT_SETTINGS: WikiCopilotSettings = {
   },
   prioritizeActiveNote: true,
   model: {
-    provider: "openai",
+    provider: "custom",
     serviceName: "",
-    endpoint: "https://api.openai.com/v1",
-    model: "gpt-5.6-terra"
+    endpoint: "",
+    model: ""
   }
 };
 

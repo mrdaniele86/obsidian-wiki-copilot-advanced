@@ -17,6 +17,7 @@ interface ConversationVault {
   createFolder(path: string): Promise<unknown>;
   create(path: string, content: string): Promise<VaultFileLike>;
   modify(file: VaultFileLike, content: string): Promise<void>;
+  delete(file: VaultFileLike): Promise<void>;
   cachedRead(file: VaultFileLike): Promise<string>;
   getMarkdownFiles(): readonly VaultFileLike[];
   getAbstractFileByPath(path: string): VaultEntryLike | null;
@@ -60,6 +61,13 @@ export class ConversationStore {
     const entry = this.vault.getAbstractFileByPath(normalizedPath);
     if (!entry) return null;
     return parseConversation(await this.vault.cachedRead(requireMarkdownFile(entry, normalizedPath)));
+  }
+
+  async delete(path: string): Promise<void> {
+    const normalizedPath = normalizePath(path);
+    const entry = this.vault.getAbstractFileByPath(normalizedPath);
+    if (!entry) return;
+    await this.vault.delete(requireMarkdownFile(entry, normalizedPath));
   }
 
   async save(folder: string, conversation: Conversation): Promise<string> {

@@ -46,6 +46,15 @@ describe("mobile interaction styles", () => {
     expect(styles).not.toMatch(/wiki-copilot-composer[^}]*transform:/su);
   });
 
+  it("keeps mobile composer content above the browser navigation safe area", () => {
+    expect(styles).toMatch(
+      /body\.is-mobile\.is-phone \.wiki-copilot-composer\s*\{[^}]*padding-bottom:\s*max\(\s*8px,\s*env\(safe-area-inset-bottom\)\s*\);/su
+    );
+    expect(styles).toMatch(
+      /body\.is-mobile \.wiki-copilot-composer-controls\s*\{[^}]*min-width:\s*0;/su
+    );
+  });
+
   it("draws a consistent disclosure triangle for source evidence", () => {
     expect(styles).toMatch(
       /\.wiki-copilot-sources summary::before\s*\{[^}]*border-left:\s*6px solid currentColor;/su

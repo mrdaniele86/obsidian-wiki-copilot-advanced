@@ -30,6 +30,10 @@ function createVault(existing: { path: string; content: string }[] = []) {
     modify: vi.fn(async (file: { path: string; content: string }, content: string) => {
       file.content = content;
     }),
+    delete: vi.fn(async (file: { path: string }) => {
+      const index = files.findIndex((item) => item.path === file.path);
+      if (index >= 0) files.splice(index, 1);
+    }),
     cachedRead: vi.fn(async (file: { path: string }) => files.find((item) => item.path === file.path)?.content ?? ""),
     getMarkdownFiles: vi.fn(() => files),
     getAbstractFileByPath: vi.fn((path: string) => files.find((file) => file.path === path) ?? null)
@@ -128,5 +132,16 @@ describe("ConversationStore", () => {
 
     await expect(store.load(path)).rejects.toThrow("not a Markdown file");
     expect(vault.cachedRead).not.toHaveBeenCalled();
+  });
+
+  it("deletes only the selected saved conversation Markdown file", async () => {
+    const path = `Memory Copilot/Conversations/${conversationFileName(conversation)}`;
+    const vault = createVault([{ path, content: serializeConversation(conversation) }]);
+    const store = new ConversationStore(vault);
+
+    await store.delete(path);
+
+    expect(vault.delete).toHaveBeenCalledWith(expect.objectContaining({ path }));
+    await expect(store.load(path)).resolves.toBeNull();
   });
 });

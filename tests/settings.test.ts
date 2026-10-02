@@ -26,9 +26,28 @@ describe("translation dictionaries", () => {
 });
 
 describe("retrieval mode settings", () => {
+  it("starts a fresh installation with a neutral custom provider", () => {
+    const settings = loadWikiCopilotSettings(undefined);
+
+    expect(settings.model).toEqual({
+      provider: "custom",
+      serviceName: "",
+      endpoint: "",
+      model: ""
+    });
+    expect(DEFAULT_SETTINGS.model).toEqual(settings.model);
+  });
+
+  it("keeps legacy configured providers usable when migrating saved settings", () => {
+    expect(loadWikiCopilotSettings({ model: {
+      provider: "openai", endpoint: "https://api.openai.com/v1", model: "gpt-5.6-sol"
+    } }).model).toMatchObject({
+      provider: "openai", endpoint: "https://api.openai.com/v1", model: "gpt-5.6-sol"
+    });
+  });
   it("defaults an invalid saved interface language to Auto", () => {
     expect(loadWikiCopilotSettings(undefined).language).toBe("auto");
-    expect(loadWikiCopilotSettings({ language: "invalid" } as never).language).toBe("auto");
+    expect(loadWikiCopilotSettings({ language: "invalid" }).language).toBe("auto");
   });
   it("uses precise retrieval by default", () => {
     const settings = loadWikiCopilotSettings(undefined);
@@ -118,6 +137,24 @@ describe("model response mode settings", () => {
 });
 
 describe("settings presentation", () => {
+  it("fills a provider suggestion without touching the stored API key", async () => {
+    const plugin = {
+      settings: loadWikiCopilotSettings(undefined),
+      getApiKey: vi.fn(() => "saved-secret"),
+      setApiKey: vi.fn(),
+      saveSettings: vi.fn().mockResolvedValue(undefined),
+      t: (key: string) => key
+    };
+    const tab = new WikiCopilotSettingTab({} as never, plugin as never);
+    Object.assign(tab, { update: vi.fn() });
+
+    await tab.setControlValue("provider", "deepseek");
+
+    expect(plugin.settings.model).toMatchObject({
+      provider: "deepseek", endpoint: "https://api.deepseek.com", model: "deepseek-v4-flash"
+    });
+    expect(plugin.setApiKey).not.toHaveBeenCalled();
+  });
   it("redraws the settings controls after persisting a language change", async () => {
     const plugin = {
       settings: loadWikiCopilotSettings(undefined),

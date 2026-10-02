@@ -1,5 +1,6 @@
 import {
   Component,
+  ConfirmationModal,
   ItemView,
   Notice,
   parseLinktext,
@@ -57,6 +58,7 @@ export class WikiCopilotView extends ItemView {
   private historyEl!: HTMLElement;
   private turns: ChatTurn[] = [];
   private conversation: Conversation | null = null;
+  private conversationPath: string | null = null;
   private unsubscribeStatus: (() => void) | null = null;
   private conversationComponent: Component | null = null;
   private activeRequest: AbortController | null = null;
@@ -295,6 +297,7 @@ export class WikiCopilotView extends ItemView {
     this.requestSequence += 1;
     this.turns = [];
     this.conversation = null;
+    this.conversationPath = null;
     this.resetConversationComponent();
     this.chatEl.empty();
     this.renderWelcome();
@@ -316,12 +319,19 @@ export class WikiCopilotView extends ItemView {
       }
       const list = history.createDiv({ cls: "wiki-copilot-history-list" });
       for (const stored of conversations) {
-        const button = list.createEl("button", {
+        const item = list.createDiv({ cls: "wiki-copilot-history-entry" });
+        const button = item.createEl("button", {
           cls: "wiki-copilot-history-item",
           text: stored.conversation.title,
           attr: { "aria-label": this.plugin.t("view.openConversation", { title: stored.conversation.title }) }
         });
         this.registerDomEvent(button, "click", () => void this.openConversation(stored.path));
+        const remove = item.createEl("button", {
+          cls: "clickable-icon wiki-copilot-history-delete",
+          attr: { "aria-label": this.plugin.t("view.deleteConversation", { title: stored.conversation.title }) }
+        });
+        setIcon(remove, "trash-2");
+        this.registerDomEvent(remove, "click", () => this.confirmDeleteConversation(stored.path, stored.conversation.title));
       }
     } catch (error) {
       console.error("Wiki Copilot: failed to list conversations.", error);
@@ -340,12 +350,39 @@ export class WikiCopilotView extends ItemView {
       this.activeRequest = null;
       this.requestSequence += 1;
       this.conversation = conversation;
+      this.conversationPath = path;
       this.turns = conversation.turns.map((turn) => ({ ...turn }));
+      const history = this.historyEl.querySelector<HTMLDetailsElement>("details");
+      if (history) history.open = false;
       this.renderConversationTurns();
     } catch (error) {
       console.error("Wiki Copilot: failed to open conversation.", error);
       new Notice(this.plugin.t("view.historyLoadFailed"));
     }
+  }
+
+  private confirmDeleteConversation(path: string, title: string): void {
+    const modal = new ConfirmationModal(this.app);
+    modal.setTitle(this.plugin.t("view.deleteConversation", { title }));
+    modal.setContent(this.plugin.t("view.deleteConversationConfirm", { title }));
+    modal.addCancelButton(this.plugin.t("view.cancel"));
+    modal.addButton((button) => button
+      .setButtonText(this.plugin.t("view.delete"))
+      .setDestructive()
+      .setCta()
+      .onClick(async () => {
+        try {
+          await this.plugin.conversations.delete(path);
+          if (this.conversationPath === path) {
+            this.startNewConversation();
+          }
+          void this.renderConversationHistory();
+        } catch (error) {
+          console.error("Wiki Copilot: failed to delete conversation.", error);
+          new Notice(this.plugin.t("view.historyLoadFailed"));
+        }
+      }));
+    modal.open();
   }
 
   private renderConversationTurns(): void {
@@ -366,7 +403,7 @@ export class WikiCopilotView extends ItemView {
   private async saveConversation(): Promise<void> {
     if (!this.conversation?.turns.length) return;
     try {
-      await this.plugin.conversations.save(this.plugin.settings.conversationFolder, this.conversation);
+      this.conversationPath = await this.plugin.conversations.save(this.plugin.settings.conversationFolder, this.conversation);
       void this.renderConversationHistory();
     } catch (error) {
       console.error("Wiki Copilot: failed to save conversation.", error);

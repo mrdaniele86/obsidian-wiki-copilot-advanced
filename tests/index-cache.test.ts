@@ -25,6 +25,7 @@ const profile: KnowledgeProfile = {
 };
 
 const settings: WikiCopilotSettings = {
+  language: "auto",
   autoDetectProfile: true,
   profile,
   retrievalMode: "fast",

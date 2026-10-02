@@ -6,9 +6,8 @@ import {
 } from "./retrieval-plan";
 import { DEFAULT_RETRIEVAL_OPTIONS, WikiRetriever } from "./retriever";
 import { WikiSearchIndex } from "./search-index";
+import type { RetrievalProgress } from "./retrieval-progress";
 import type { KnowledgeRole, RetrievalOptions, RetrievalResult } from "./types";
-
-export type RetrievalProgress = (message: string) => void;
 
 const CURATED_WIKI_ROLES: ReadonlySet<KnowledgeRole> = new Set([
   "index",
@@ -44,7 +43,7 @@ export class HybridWikiRetriever {
     options: Partial<RetrievalOptions> = {},
     onProgress?: RetrievalProgress
   ): Promise<RetrievalResult> {
-    onProgress?.("正在检索已整理的 Wiki 片段…");
+    onProgress?.("fast");
     return Promise.resolve(keepCuratedWikiChunks(this.primaryRetriever.retrieve(query, {
       ...options,
       includePending: false,
@@ -59,7 +58,7 @@ export class HybridWikiRetriever {
     overrides: Partial<RetrievalOptions> = {},
     onProgress?: RetrievalProgress
   ): Promise<RetrievalResult> {
-    onProgress?.("正在检索已整理的 Wiki 片段…");
+    onProgress?.("fast");
     const options: RetrievalOptions = {
       ...DEFAULT_RETRIEVAL_OPTIONS,
       ...overrides,

@@ -5,7 +5,6 @@ import type { ChatTurn } from "../core/types";
 import { providerRequiresApiKey } from "../model-presets";
 import type { ModelSettings } from "../settings";
 import {
-  ChatCompletionStreamError,
   ChatCompletionStreamInterruptedError,
   readChatCompletionStream
 } from "./chat-completion-stream";
@@ -29,13 +28,20 @@ interface ChatCompletionResponse {
 export type ActiveCompletionMode = "stream" | "non-stream";
 export type ModelResponseMode = "auto" | "stream" | "non-stream";
 export type CompletionActivity = "response-headers" | "stream-data";
+export type ModelResponseDetail = "streaming-unavailable" | "streaming-unsupported" | "complete-response";
+export type StreamFallbackReason = "streaming-unavailable" | "response-not-streamable" | "stream-connection-failed";
+export type ModelRequestErrorCode = "request-failed" | "empty-response";
+export type ModelConfigurationErrorCode = "invalid-endpoint" | "missing-service-name" | "missing-endpoint-or-model" | "missing-api-key";
+export type ModelCompletionWarning = "length" | "content-filter";
+export type ModelStreamInterruptionReason = "insufficient-system-resource" | "stream-interrupted";
 
 export interface CompletionAnswerOptions {
   signal?: AbortSignal;
   responseMode?: ModelResponseMode;
   onDelta?: (delta: string) => void;
-  onResponseMode?: (mode: ActiveCompletionMode, detail?: string) => void;
+  onResponseMode?: (mode: ActiveCompletionMode, detail?: ModelResponseDetail) => void;
   onActivity?: (activity: CompletionActivity) => void;
+  onWarning?: (warning: ModelCompletionWarning) => void;
 }
 
 export interface RetrievalPlanningOptions {
@@ -48,17 +54,43 @@ export interface RetrievalPlanningOptions {
 export class StreamFallbackRequiredError extends Error {
   override readonly name = "StreamFallbackRequiredError";
 
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
+  constructor(readonly reason: StreamFallbackReason, options?: ErrorOptions) {
+    super(reason, options);
   }
 }
 
 class SafeNonStreamingFallbackError extends Error {
   override readonly name = "SafeNonStreamingFallbackError";
+
+  constructor(readonly reason: Extract<ModelResponseDetail, "streaming-unsupported">) {
+    super(reason);
+  }
 }
 
-class ModelRequestError extends Error {
+export class ModelRequestError extends Error {
   override readonly name = "ModelRequestError";
+
+  constructor(readonly code: ModelRequestErrorCode, readonly detail?: string) {
+    super(code);
+  }
+}
+
+export class ModelConfigurationError extends Error {
+  override readonly name = "ModelConfigurationError";
+
+  constructor(readonly code: ModelConfigurationErrorCode) {
+    super(code);
+  }
+}
+
+export class ModelStreamInterruptedError extends ChatCompletionStreamInterruptedError {
+  constructor(
+    readonly reason: ModelStreamInterruptionReason,
+    partialText: string,
+    options?: ErrorOptions
+  ) {
+    super(reason, partialText, options);
+  }
 }
 
 type FetchFunction = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -110,7 +142,7 @@ function completionUrl(endpoint: string): string {
   const trimmed = endpoint.trim().replace(/\/+$/u, "");
   const url = new URL(trimmed);
   if (!/^https?:$/u.test(url.protocol)) {
-    throw new Error("模型 endpoint 必须使用 http 或 https。 ");
+    throw new ModelConfigurationError("invalid-endpoint");
   }
   if (!/\/chat\/completions$/u.test(url.pathname)) {
     url.pathname = `${url.pathname.replace(/\/+$/u, "")}/chat/completions`;
@@ -172,15 +204,21 @@ function streamUnsupported(status: number, detail: string): boolean {
   return /stream|server[- ]sent|event[- ]stream|sse|unsupported|not supported|不支持/iu.test(detail);
 }
 
-function finishWarning(text: string, finishReason: string | null): string {
+function finishWarning(
+  text: string,
+  finishReason: string | null,
+  onWarning?: (warning: ModelCompletionWarning) => void
+): string {
   if (finishReason === "length") {
-    return `${text}\n\n> [!warning] 回答达到模型长度上限，内容可能不完整。`;
+    onWarning?.("length");
+    return text;
   }
   if (finishReason === "content_filter") {
-    return `${text}\n\n> [!warning] 回答受到模型内容过滤，内容可能不完整。`;
+    onWarning?.("content-filter");
+    return text;
   }
   if (finishReason === "insufficient_system_resource") {
-    throw new ChatCompletionStreamInterruptedError("模型因服务资源不足中断了回答。", text);
+    throw new ModelStreamInterruptedError("insufficient-system-resource", text);
   }
   return text;
 }
@@ -255,10 +293,10 @@ export class OpenAICompatibleClient {
     const fetcher = this.streamingFetch();
     if (!fetcher) {
       if (responseMode === "auto") {
-        options.onResponseMode?.("non-stream", "当前环境不支持响应流，已使用兼容模式。");
+        options.onResponseMode?.("non-stream", "streaming-unavailable");
         return this.answerNonStreaming(request, timeoutMilliseconds, options.signal, options.onActivity);
       }
-      throw new StreamFallbackRequiredError("当前 Obsidian 环境不支持流式读取，请使用非流式兼容模式。");
+      throw new StreamFallbackRequiredError("streaming-unavailable");
     }
 
     options.onResponseMode?.("stream");
@@ -266,7 +304,7 @@ export class OpenAICompatibleClient {
       return await this.answerStreaming(request, fetcher, timeoutMilliseconds, options);
     } catch (error) {
       if (error instanceof SafeNonStreamingFallbackError && responseMode === "auto") {
-        options.onResponseMode?.("non-stream", `${error.message}已使用兼容模式。`);
+        options.onResponseMode?.("non-stream", error.reason);
         return this.answerNonStreaming(request, timeoutMilliseconds, options.signal, options.onActivity);
       }
       throw error;
@@ -364,15 +402,15 @@ export class OpenAICompatibleClient {
 
   private requestHeaders(settings: ModelSettings): Record<string, string> {
     if (!this.isConfigured(settings)) {
-      throw new Error(settings.provider === "custom" && !settings.serviceName.trim()
-        ? "请先在 Wiki Copilot 设置中填写服务名称。"
-        : "请先在 Wiki Copilot 设置中填写模型 endpoint 和模型名称。 ");
+      throw new ModelConfigurationError(settings.provider === "custom" && !settings.serviceName.trim()
+        ? "missing-service-name"
+        : "missing-endpoint-or-model");
     }
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     const apiKey = this.getApiKey()?.trim() ?? "";
     if (providerRequiresApiKey(settings.provider) && !apiKey) {
-      throw new Error("请先在 Wiki Copilot 设置中填写 API Key。");
+      throw new ModelConfigurationError("missing-api-key");
     }
     if (apiKey) {
       headers.Authorization = `Bearer ${apiKey}`;
@@ -413,11 +451,11 @@ export class OpenAICompatibleClient {
     }
     if (response.status < 200 || response.status >= 300) {
       const detail = body.error?.message || response.text.slice(0, 500) || `HTTP ${response.status}`;
-      throw new ModelRequestError(`模型请求失败：${detail}`);
+      throw new ModelRequestError("request-failed", detail);
     }
     const text = responseText(body.choices);
     if (!text) {
-      throw new ModelRequestError("模型返回了空回答。 ");
+      throw new ModelRequestError("empty-response");
     }
     return text;
   }
@@ -456,9 +494,9 @@ export class OpenAICompatibleClient {
         const responseBody = await response.text();
         const detail = responseErrorDetail(responseBody, response.status);
         if (streamUnsupported(response.status, detail)) {
-          throw new SafeNonStreamingFallbackError("服务不支持流式响应，");
+          throw new SafeNonStreamingFallbackError("streaming-unsupported");
         }
-        throw new ModelRequestError(`模型请求失败：${detail}`);
+        throw new ModelRequestError("request-failed", detail);
       }
 
       if (contentType.includes("application/json")) {
@@ -466,16 +504,16 @@ export class OpenAICompatibleClient {
         const body = parseJsonResponse(responseBody);
         const text = responseText(body.choices);
         if (!text) {
-          throw new ModelRequestError(body.error?.message || "模型返回了空回答。 ");
+          throw body.error?.message
+            ? new ModelRequestError("request-failed", body.error.message)
+            : new ModelRequestError("empty-response");
         }
-        options.onResponseMode?.("non-stream", "服务返回了完整响应。");
+        options.onResponseMode?.("non-stream", "complete-response");
         options.onDelta?.(text);
         return text;
       }
       if (!response.body || typeof response.body.getReader !== "function") {
-        throw new StreamFallbackRequiredError(
-          "当前响应不支持流式读取，可使用非流式兼容模式重试。"
-        );
+        throw new StreamFallbackRequiredError("response-not-streamable");
       }
 
       let receivedStreamData = false;
@@ -492,7 +530,7 @@ export class OpenAICompatibleClient {
           options.onDelta?.(delta);
         }
       });
-      return finishWarning(result.text, result.finishReason);
+      return finishWarning(result.text, result.finishReason, options.onWarning);
     } catch (error) {
       if (!controller.signal.aborted) {
         controller.abort();
@@ -514,17 +552,14 @@ export class OpenAICompatibleClient {
         throw error;
       }
       if (receivedText) {
-        throw new ChatCompletionStreamInterruptedError(
-          error instanceof Error ? error.message : "模型流式连接已中断。",
+        throw new ModelStreamInterruptedError(
+          "stream-interrupted",
           "",
           { cause: error }
         );
       }
-      const detail = error instanceof ChatCompletionStreamError
-        ? error.message
-        : "无法建立流式连接。";
       throw new StreamFallbackRequiredError(
-        `${detail} 可使用非流式兼容模式重试。`,
+        "stream-connection-failed",
         { cause: error }
       );
     } finally {

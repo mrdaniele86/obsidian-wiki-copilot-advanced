@@ -5,8 +5,38 @@ const viewSource = readFileSync(
   new URL("../src/ui/wiki-copilot-view.ts", import.meta.url),
   "utf8"
 );
+const mainSource = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+const settingsSource = readFileSync(new URL("../src/settings.ts", import.meta.url), "utf8");
+const coordinatorSource = readFileSync(new URL("../src/obsidian/index-coordinator.ts", import.meta.url), "utf8");
+const retrieverSource = readFileSync(new URL("../src/core/hybrid-retriever.ts", import.meta.url), "utf8");
 
 describe("mobile view interactions", () => {
+  it("keeps user-facing Chinese literals in the translation dictionaries", () => {
+    expect(mainSource.replace(/console\.(warn|error)\([^\n]+/gu, "")).not.toMatch(/[\p{Script=Han}]/u);
+    expect(settingsSource).not.toMatch(/[\p{Script=Han}]/u);
+    expect(viewSource).not.toContain('text: "Wiki Copilot"');
+  });
+  it("maps coordinator status states through the UI translator", () => {
+    expect(viewSource).toContain("this.plugin.localizedIndexStatus(status)");
+    expect(mainSource).toContain("localizedIndexStatus(status: IndexStatus)");
+    expect(mainSource).toContain('this.t("main.index.building")');
+    expect(mainSource).toContain('this.localizedIndexStatus(diagnostics.status)');
+  });
+  it("passes typed retrieval progress semantics to the plugin translation boundary", () => {
+    expect(coordinatorSource).not.toMatch(/onProgress\?\.\("[\p{Script=Han}]/u);
+    expect(retrieverSource).not.toMatch(/onProgress\?\.\("[\p{Script=Han}]/u);
+    expect(mainSource).toContain("localizeRetrievalProgress");
+    expect(mainSource).toContain('"main.answerTimeout.precise"');
+  });
+  it("refreshes localized chrome in place without rebuilding the conversation shell", () => {
+    expect(viewSource).toContain('const welcome = this.chatEl?.querySelector(".wiki-copilot-welcome")');
+    expect(viewSource).not.toContain("refreshConfigurationState(): void {\n    if (this.containerEl.children[1]) this.renderShell()");
+    expect(viewSource).toContain("refreshConversationChrome()");
+    expect(viewSource).toContain('querySelectorAll<HTMLElement>(".wiki-copilot-message-label")');
+    expect(viewSource).toContain('querySelectorAll<HTMLDetailsElement>(".wiki-copilot-sources")');
+    expect(viewSource).toContain('querySelectorAll<HTMLAnchorElement>(".wiki-copilot-citation")');
+  });
+
   it("dismisses the keyboard from the message region instead of intercepting the send button", () => {
     expect(viewSource).toContain('this.registerDomEvent(this.chatEl, "pointerdown"');
     expect(viewSource).not.toContain('this.registerDomEvent(container, "pointerdown"');
@@ -21,8 +51,7 @@ describe("mobile view interactions", () => {
   });
 
   it("presents stable and pending source paths with one neutral label", () => {
-    expect(viewSource).toContain('"stable-source": "原文"');
-    expect(viewSource).toContain('"pending-source": "原文"');
+    expect(viewSource).toContain('role === "stable-source" || role === "pending-source" ? "role.source"');
     expect(viewSource).not.toContain('"stable-source": "稳定原文"');
     expect(viewSource).not.toContain('"pending-source": "未验收"');
     expect(viewSource).not.toContain("可核对未验收资料");
@@ -31,8 +60,12 @@ describe("mobile view interactions", () => {
     expect(viewSource).not.toContain("wiki-copilot-unverified-warning");
   });
 
-  it("does not expose the textarea label as an Obsidian hover tooltip", () => {
-    expect(viewSource).toContain('placeholder: "询问当前知识库…"');
+  it("localizes welcome and composer labels without adding an Obsidian hover tooltip", () => {
+    expect(viewSource).toContain('text: this.plugin.t("welcome.title")');
+    expect(viewSource).toContain('text: this.plugin.t("welcome.description")');
+    expect(viewSource).toContain('placeholder: this.plugin.t("composer.placeholder")');
+    expect(viewSource).toContain('text: this.plugin.t("composer.shortcut")');
+    expect(viewSource).toContain('text: this.plugin.t("composer.send")');
     expect(viewSource).not.toContain('"aria-label": "向 Wiki Copilot 提问"');
   });
 

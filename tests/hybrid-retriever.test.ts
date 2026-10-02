@@ -54,7 +54,7 @@ describe("HybridWikiRetriever fast mode", () => {
 
     await retriever.retrieve("制动压力", { graphExpansion: false }, progress);
 
-    expect(progress).toHaveBeenCalledWith("正在检索已整理的 Wiki 片段…");
+    expect(progress).toHaveBeenCalledWith("fast");
   });
 
   it("merges model-planned lexical variants while remaining Wiki-only", async () => {

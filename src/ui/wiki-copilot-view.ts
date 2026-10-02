@@ -31,6 +31,7 @@ import type { IndexStatus } from "../obsidian/index-coordinator";
 import {
   mobileNavigationClearance,
   nextMobileKeyboardVisible,
+  shouldReserveMobileNavigationClearance,
   shouldDismissMobileKeyboardFromChat,
   syncComposerFocus
 } from "./composer-focus";
@@ -1065,7 +1066,7 @@ export class WikiCopilotView extends ItemView {
     const clearance = mobileNavigationClearance(
       container.getBoundingClientRect(),
       navbar.getBoundingClientRect(),
-      visible
+      shouldReserveMobileNavigationClearance(this.mobileKeyboardVisible, visible)
     );
     container.style.setProperty("--wiki-copilot-mobile-nav-clearance", `${clearance}px`);
   }

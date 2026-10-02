@@ -3,6 +3,7 @@ import {
   mobileKeyboardOcclusion,
   mobileNavigationClearance,
   nextMobileKeyboardVisible,
+  shouldReserveMobileNavigationClearance,
   shouldDismissMobileKeyboardFromChat,
   syncComposerFocus
 } from "../src/ui/composer-focus";
@@ -29,6 +30,12 @@ describe("composer focus lifecycle", () => {
       { top: 756, bottom: 820 },
       false
     )).toBe(0);
+  });
+
+  it("drops floating-navbar clearance while the keyboard owns the viewport", () => {
+    expect(shouldReserveMobileNavigationClearance(true, true)).toBe(false);
+    expect(shouldReserveMobileNavigationClearance(false, true)).toBe(true);
+    expect(shouldReserveMobileNavigationClearance(false, false)).toBe(false);
   });
 
   it("keeps keyboard layout active until the visual viewport is almost restored", () => {

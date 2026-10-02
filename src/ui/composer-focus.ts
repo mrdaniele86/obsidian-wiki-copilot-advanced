@@ -58,6 +58,14 @@ export function mobileNavigationClearance(
   return Math.max(0, Math.ceil(view.bottom - navbar.top + gap));
 }
 
+/** The visual viewport already creates the keyboard edge while it is open. */
+export function shouldReserveMobileNavigationClearance(
+  keyboardVisible: boolean,
+  navbarVisible: boolean
+): boolean {
+  return navbarVisible && !keyboardVisible;
+}
+
 /** Tapping answer text dismisses the keyboard without stealing taps from controls. */
 export function shouldDismissMobileKeyboardFromChat(target: EventTarget | null): boolean {
   const candidate = target as Partial<ClosestTarget> | null;

@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 const projectRoot = resolve(import.meta.dirname, "..");
-const betaVersion = "2.1.1-beta.1";
+const betaVersion = "2.1.1-beta.2";
 const execFile = promisify(execFileCallback);
 
 type Manifest = {

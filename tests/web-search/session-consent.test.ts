@@ -22,4 +22,13 @@ describe("SessionWebSearchConsent", () => {
     expect(consent.has("gemini", "gemini-2.5-flash")).toBe(false);
     expect(consent.has("gemini", "gemini-2.5-pro")).toBe(false);
   });
+
+  it("does not reuse question-only consent to send recent chat context", () => {
+    const consent = new SessionWebSearchConsent();
+
+    consent.remember("gemini", "gemini-2.5-flash", false);
+
+    expect(consent.has("gemini", "gemini-2.5-flash", false)).toBe(true);
+    expect(consent.has("gemini", "gemini-2.5-flash", true)).toBe(false);
+  });
 });

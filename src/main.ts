@@ -58,7 +58,7 @@ import { WikiCopilotView, WIKI_COPILOT_VIEW_TYPE } from "./ui/wiki-copilot-view"
 import type { IndexStatus } from "./obsidian/index-coordinator";
 import type { RetrievalProgressStage } from "./core/retrieval-progress";
 import { WebSearchService } from "./web-search/web-search-service";
-import type { WebSearchResult } from "./web-search/types";
+import type { WebSearchHistoryTurn, WebSearchResult } from "./web-search/types";
 import { SessionWebSearchConsent } from "./web-search/session-consent";
 
 const RETRIEVAL_PLANNER_TIMEOUT_MS = 15_000;
@@ -328,7 +328,7 @@ export default class WikiCopilotPlugin extends Plugin {
     this.refreshOpenViews();
   }
 
-  async searchWeb(question: string): Promise<WebSearchResult> {
+  async searchWeb(question: string, history?: WebSearchHistoryTurn[]): Promise<WebSearchResult> {
     const apiKey = this.getWebSearchApiKey() ?? "";
     const service = new WebSearchService({
       settings: this.settings.webSearch,
@@ -337,7 +337,8 @@ export default class WikiCopilotPlugin extends Plugin {
     return service.search({
       question,
       model: this.settings.webSearch.geminiModel,
-      apiKey
+      apiKey,
+      ...(history?.length ? { history } : {})
     });
   }
 

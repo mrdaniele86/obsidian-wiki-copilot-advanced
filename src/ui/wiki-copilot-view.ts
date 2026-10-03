@@ -40,6 +40,8 @@ import {
 import { findExpandedSourceButton } from "./source-highlight";
 import { StreamingMarkdownRenderer } from "./streaming-markdown-renderer";
 import type { WebSearchResult } from "../web-search/types";
+import { buildWebSearchHistory } from "../web-search/history";
+import { WebSearchError } from "../web-search/gemini-grounding";
 
 export const WIKI_COPILOT_VIEW_TYPE = "wiki-copilot-view";
 
@@ -324,11 +326,26 @@ export class WikiCopilotView extends ItemView {
       new Notice(this.plugin.t("view.webSearch.unavailable"));
       return;
     }
-    const decision = this.plugin.webSearchConsent.has("gemini", this.plugin.settings.webSearch.geminiModel)
+    const includesRecentChat = this.plugin.settings.webSearch.includeRecentChatContext === true;
+    const decision = this.plugin.webSearchConsent.has(
+      "gemini",
+      this.plugin.settings.webSearch.geminiModel,
+      includesRecentChat
+    )
       ? "session"
       : await this.requestWebSearchConsent();
     if (decision === "session") {
-      this.plugin.webSearchConsent.remember("gemini", this.plugin.settings.webSearch.geminiModel);
+      this.plugin.webSearchConsent.remember(
+        "gemini",
+        this.plugin.settings.webSearch.geminiModel,
+        includesRecentChat
+      );
+    }
+    if (decision !== "cancel") {
+      const history = includesRecentChat
+        ? buildWebSearchHistory(this.turns)
+        : undefined;
+      await this.runWebSearch(question, history);
     }
   }
 
@@ -346,7 +363,11 @@ export class WikiCopilotView extends ItemView {
       };
       modal.onClose = () => decide("cancel");
       modal.setTitle(this.plugin.t("view.webSearch.consent.title"));
-      modal.contentEl.createEl("p", { text: this.plugin.t("view.webSearch.consent.questionOnly") });
+      modal.contentEl.createEl("p", {
+        text: this.plugin.t(this.plugin.settings.webSearch.includeRecentChatContext
+          ? "view.webSearch.consent.recentChat"
+          : "view.webSearch.consent.questionOnly")
+      });
       modal.contentEl.createEl("p", { text: this.plugin.t("view.webSearch.consent.dataHandling") });
       const actions = modal.contentEl.createDiv({ cls: "wiki-copilot-web-search-consent-actions" });
       const searchNow = actions.createEl("button", { cls: "mod-cta", text: this.plugin.t("view.webSearch.searchNow") });
@@ -616,6 +637,59 @@ export class WikiCopilotView extends ItemView {
     this.queryEl.value = "";
     this.resetComposerHeight();
     await this.runQuestion(question, history, { appendUserMessage: true });
+  }
+
+  private async runWebSearch(
+    question: string,
+    history?: import("../web-search/types").WebSearchHistoryTurn[]
+  ): Promise<void> {
+    if (this.busy) {
+      new Notice(this.plugin.t("view.busy"));
+      return;
+    }
+    const sequence = ++this.requestSequence;
+    this.setBusy(true);
+    const loading = this.appendLoading(this.plugin.t("view.webSearch.preparing"));
+    try {
+      const result = await this.plugin.searchWeb(question, history);
+      if (sequence !== this.requestSequence) return;
+      loading.remove();
+      this.chatEl.querySelector(".wiki-copilot-welcome")?.remove();
+      this.queryEl.value = "";
+      this.resetComposerHeight();
+      this.appendUserMessage(question);
+      await this.appendAssistantMessage(result.answer, [], false, result);
+      this.turns.push({ role: "user", content: question }, { role: "assistant", content: result.answer });
+      const now = new Date().toISOString();
+      this.conversation ??= {
+        id: this.newConversationId(), createdAt: now, updatedAt: now, title: question.slice(0, 80), turns: []
+      };
+      this.conversation.turns.push({ role: "user", content: question }, {
+        role: "assistant", content: result.answer, sources: [], knowledgeBaseHit: false, webSearch: result
+      });
+      this.conversation.updatedAt = now;
+      await this.saveConversation();
+    } catch (error) {
+      if (sequence !== this.requestSequence) return;
+      loading.remove();
+      let errorContainer: HTMLElement | null = null;
+      errorContainer = this.appendError(error, {
+        label: this.plugin.t("view.webSearch.retry"),
+        action: () => {
+          errorContainer?.remove();
+          void this.runWebSearch(question, history);
+        }
+      }, this.localizeWebSearchError(error));
+    } finally {
+      if (sequence === this.requestSequence) this.setBusy(false);
+    }
+  }
+
+  private localizeWebSearchError(error: unknown): string {
+    if (error instanceof WebSearchError) {
+      return this.plugin.t(`view.webSearch.error.${error.code}` as import("../i18n").TranslationKey);
+    }
+    return this.plugin.t("view.webSearch.error.network");
   }
 
   private async runQuestion(
@@ -1061,11 +1135,12 @@ export class WikiCopilotView extends ItemView {
 
   private appendError(
     error: unknown,
-    recovery?: { label: string; action: () => void }
+    recovery?: { label: string; action: () => void },
+    messageOverride?: string
   ): HTMLElement {
     const keepPinned = this.isNearBottom();
     const isTimeout = error instanceof AnswerTimeoutError;
-    const errorMessage = localizeModelError(this.plugin.t.bind(this.plugin), error);
+    const errorMessage = messageOverride ?? localizeModelError(this.plugin.t.bind(this.plugin), error);
     const container = this.chatEl.createDiv({ cls: "wiki-copilot-message is-error", attr: { "data-error-kind": isTimeout ? "timeout" : "failed" } });
     container.createDiv({
       cls: "wiki-copilot-message-label",

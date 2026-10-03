@@ -6,6 +6,12 @@ export interface CitationCheck {
   invalidIds: string[];
 }
 
+export interface CitationWarningText {
+  title: string;
+  invalidIds: (ids: string) => string;
+  missingValidCitation: string;
+}
+
 const CITATION = /\[S(\d+)\]/giu;
 const SOURCE_IDS = /S(\d+)/giu;
 const COMBINED_SQUARE_CITATION = /\[((?:S\d+)(?:\s*(?:[/／、,，&＆]|和|及)\s*S\d+)+)\]/giu;
@@ -55,7 +61,11 @@ export function normalizeAnswerCitations(markdown: string, sources: SourceRefere
     .join("");
 }
 
-export function validateAnswerCitations(markdown: string, sources: SourceReference[]): CitationCheck {
+export function validateAnswerCitations(
+  markdown: string,
+  sources: SourceReference[],
+  warningText?: CitationWarningText
+): CitationCheck {
   const normalizedMarkdown = normalizeAnswerCitations(markdown, sources);
   const validIds = new Set(sources.map((source) => source.id));
   const citedIds = new Set<string>();
@@ -72,15 +82,17 @@ export function validateAnswerCitations(markdown: string, sources: SourceReferen
 
   const warnings: string[] = [];
   if (invalidIds.size > 0) {
-    warnings.push(`模型使用了不存在的来源标记：${[...invalidIds].join("、")}。`);
+    warnings.push(warningText
+      ? warningText.invalidIds([...invalidIds].join(", "))
+      : `模型使用了不存在的来源标记：${[...invalidIds].join("、")}。`);
   }
   if (sources.length > 0 && citedIds.size === 0) {
-    warnings.push("模型回答未包含有效来源标记；请以来源列表为准。 ");
+    warnings.push(warningText?.missingValidCitation ?? "模型回答未包含有效来源标记；请以来源列表为准。 ");
   }
 
   return {
     markdown: warnings.length > 0
-      ? `${normalizedMarkdown.trim()}\n\n> [!warning] Wiki Copilot 引用检查\n> ${warnings.join(" ")}`
+      ? `${normalizedMarkdown.trim()}\n\n> [!warning] Wiki Copilot ${warningText?.title ?? "引用检查"}\n> ${warnings.join(" ")}`
       : normalizedMarkdown,
     citedIds: [...citedIds],
     invalidIds: [...invalidIds]

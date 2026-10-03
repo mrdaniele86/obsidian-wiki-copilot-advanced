@@ -55,6 +55,18 @@ describe("answer citations", () => {
     expect(missing.markdown).toContain("未包含有效来源标记");
   });
 
+  it("uses caller-provided localized text for citation warnings", () => {
+    const checked = validateAnswerCitations("Conclusione senza fonte.", sources, {
+      title: "Verifica citazioni",
+      invalidIds: (ids) => `Riferimenti non validi: ${ids}.`,
+      missingValidCitation: "La risposta non contiene riferimenti validi; usa l'elenco delle fonti."
+    });
+
+    expect(checked.markdown).toContain("Wiki Copilot Verifica citazioni");
+    expect(checked.markdown).toContain("La risposta non contiene riferimenti validi");
+    expect(checked.markdown).not.toContain("引用检查");
+  });
+
   it("repairs the parenthesized citation variants produced in streamed answers", () => {
     const screenshotSources = ["S14", "S27", "S28", "S30", "S31", "S32", "S34"].map(source);
     const checked = validateAnswerCitations(

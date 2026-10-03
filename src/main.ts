@@ -541,7 +541,11 @@ export default class WikiCopilotPlugin extends Plugin {
       }
       throw error;
     }
-    const citationCheck = validateAnswerCitations(rawMarkdown, context.sources);
+    const citationCheck = validateAnswerCitations(rawMarkdown, context.sources, {
+      title: this.t("view.citationWarningTitle"),
+      invalidIds: (ids) => this.t("view.citationWarningInvalidIds", { ids }),
+      missingValidCitation: this.t("view.citationWarningMissing")
+    });
     return { markdown: citationCheck.markdown, sources: context.sources, knowledgeBaseHit };
   }
 

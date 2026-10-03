@@ -116,6 +116,15 @@ describe("mobile view interactions", () => {
     expect(consentMethod).not.toContain("this.plugin.searchWeb");
   });
 
+  it("treats Escape, close, and backdrop dismissal as one cancel decision", () => {
+    const consentMethod = viewSource.match(
+      /private requestWebSearchConsent\(\): Promise<[\s\S]*?\{([\s\S]*?)\n  \}/u
+    )?.[1] ?? "";
+
+    expect(consentMethod).toContain('modal.onClose = () => decide("cancel")');
+    expect(consentMethod).toContain("if (resolved)");
+  });
+
   it("coalesces mobile textarea measurements to one animation frame", () => {
     expect(viewSource).toContain(
       'this.registerDomEvent(this.queryEl, "input", () => this.scheduleComposerResize())'

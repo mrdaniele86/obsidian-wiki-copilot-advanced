@@ -329,12 +329,14 @@ export class WikiCopilotView extends ItemView {
       const modal = new Modal(this.app);
       let resolved = false;
       const decide = (decision: "cancel" | "once" | "session"): void => {
-        if (!resolved) {
-          resolved = true;
-          resolve(decision);
+        if (resolved) {
+          return;
         }
+        resolved = true;
+        resolve(decision);
         modal.close();
       };
+      modal.onClose = () => decide("cancel");
       modal.setTitle(this.plugin.t("view.webSearch.consent.title"));
       modal.contentEl.createEl("p", { text: this.plugin.t("view.webSearch.consent.questionOnly") });
       modal.contentEl.createEl("p", { text: this.plugin.t("view.webSearch.consent.dataHandling") });

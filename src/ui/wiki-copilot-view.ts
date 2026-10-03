@@ -172,6 +172,13 @@ export class WikiCopilotView extends ItemView {
     for (const details of this.chatEl.querySelectorAll<HTMLDetailsElement>(".wiki-copilot-sources")) {
       details.querySelector("summary")?.setText(this.plugin.t("view.sources", { count: details.querySelectorAll(".wiki-copilot-source").length }));
     }
+    for (const details of this.chatEl.querySelectorAll<HTMLDetailsElement>(".wiki-copilot-web-sources")) {
+      const provider = details.dataset.webProvider;
+      const count = Number.parseInt(details.dataset.webSourceCount ?? "", 10);
+      if (provider && Number.isSafeInteger(count) && count >= 0) {
+        details.querySelector("summary")?.setText(this.plugin.t("view.webSearch.sources", { provider, count }));
+      }
+    }
     for (const source of this.chatEl.querySelectorAll<HTMLButtonElement>(".wiki-copilot-source")) {
       const id = source.dataset.sourceId;
       const title = source.querySelector(".wiki-copilot-source-title")?.textContent ?? "";
@@ -966,6 +973,8 @@ export class WikiCopilotView extends ItemView {
   private renderWebSources(container: HTMLElement, webSearch?: WebSearchResult): void {
     if (!webSearch || webSearch.sources.length === 0) return;
     const details = container.createEl("details", { cls: "wiki-copilot-web-sources" });
+    details.dataset.webProvider = webSearch.provider;
+    details.dataset.webSourceCount = String(webSearch.sources.length);
     details.createEl("summary", { text: this.plugin.t("view.webSearch.sources", { provider: webSearch.provider, count: webSearch.sources.length }) });
     const list = details.createDiv({ cls: "wiki-copilot-web-source-list" });
     for (const source of webSearch.sources) {

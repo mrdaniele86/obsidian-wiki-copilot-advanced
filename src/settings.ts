@@ -180,7 +180,9 @@ type WikiCopilotSettingKey =
   | "serviceName"
   | "endpoint"
   | "model"
-  | "retrievalMode";
+  | "retrievalMode"
+  | "webSearchMode"
+  | "webSearchGeminiModel";
 
 export class WikiCopilotSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: WikiCopilotPlugin) {
@@ -317,6 +319,61 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
             }
           }
         ]
+      },
+      {
+        type: "group",
+        heading: t("settings.webSearch.heading"),
+        items: [
+          {
+            name: t("settings.webSearch.mode.name"), desc: t("settings.webSearch.mode.desc"),
+            control: {
+              type: "dropdown",
+              key: "webSearchMode",
+              options: {
+                disabled: t("settings.webSearch.mode.disabled"),
+                "current-provider": t("settings.webSearch.mode.currentProvider"),
+                "dedicated-gemini": t("settings.webSearch.mode.dedicatedGemini")
+              }
+            }
+          },
+          {
+            name: t("settings.webSearch.currentProvider.name"),
+            desc: t("settings.webSearch.currentProvider.desc"),
+            visible: () => this.plugin.settings.webSearch.mode === "current-provider",
+            render: (setting) => {
+              setting
+                .setName(t("settings.webSearch.currentProvider.name"))
+                .setDesc(t("settings.webSearch.currentProvider.desc"))
+                .setDisabled(true);
+            }
+          },
+          {
+            name: t("settings.webSearch.geminiModel.name"),
+            desc: t("settings.webSearch.geminiModel.desc"),
+            visible: () => this.plugin.settings.webSearch.mode === "dedicated-gemini",
+            control: { type: "text", key: "webSearchGeminiModel", placeholder: DEFAULT_WEB_SEARCH_SETTINGS.geminiModel }
+          },
+          {
+            name: t("settings.webSearch.apiKey.name"),
+            desc: t("settings.webSearch.apiKey.desc"),
+            visible: () => this.plugin.settings.webSearch.mode === "dedicated-gemini",
+            render: (setting) => {
+              setting
+                .setName(t("settings.webSearch.apiKey.name"))
+                .setDesc(t("settings.webSearch.apiKey.desc"))
+                .addText((text) => {
+                  text.inputEl.type = "password";
+                  text.inputEl.autocomplete = "off";
+                  return text
+                    .setPlaceholder(t("settings.webSearch.apiKey.placeholder"))
+                    .setValue(this.plugin.getWebSearchApiKey() ?? "")
+                    .onChange(async (value) => {
+                      await this.plugin.setWebSearchApiKey(value);
+                    });
+                });
+            }
+          }
+        ]
       }
     ];
   }
@@ -335,6 +392,10 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
         return this.plugin.settings.model.model;
       case "retrievalMode":
         return this.plugin.settings.retrievalMode;
+      case "webSearchMode":
+        return this.plugin.settings.webSearch.mode;
+      case "webSearchGeminiModel":
+        return this.plugin.settings.webSearch.geminiModel;
     }
   }
 
@@ -382,6 +443,17 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
           const retrievalSettings = retrievalSettingsForMode(value);
           this.plugin.settings.retrievalRange = retrievalSettings.answerTimeoutRange;
           this.plugin.settings.retrieval = retrievalSettings.options;
+        }
+        break;
+      case "webSearchMode":
+        if (!isWebSearchMode(value)) return;
+        this.plugin.settings.webSearch.mode = value;
+        await this.plugin.saveSettings();
+        this.update();
+        return;
+      case "webSearchGeminiModel":
+        if (typeof value === "string" && value.trim()) {
+          this.plugin.settings.webSearch.geminiModel = value.trim();
         }
         break;
     }

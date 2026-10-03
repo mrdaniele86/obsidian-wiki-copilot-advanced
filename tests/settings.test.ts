@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("obsidian", () => ({
@@ -173,6 +174,19 @@ describe("model response mode settings", () => {
 });
 
 describe("settings presentation", () => {
+  it("exposes the localized, capability-aware web search controls", () => {
+    const settingsSource = readFileSync(
+      new URL("../src/settings.ts", import.meta.url),
+      "utf8"
+    );
+
+    expect(settingsSource).toContain('heading: t("settings.webSearch.heading")');
+    expect(settingsSource).toContain('webSearch.mode === "dedicated-gemini"');
+    expect(settingsSource).toContain('key: "webSearchMode"');
+    expect(settingsSource).toContain('key: "webSearchGeminiModel"');
+    expect(settingsSource).toContain('this.plugin.setWebSearchApiKey(value)');
+  });
+
   it("fills a provider suggestion without touching the stored API key", async () => {
     const plugin = {
       settings: loadWikiCopilotSettings(undefined),

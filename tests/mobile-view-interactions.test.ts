@@ -92,6 +92,19 @@ describe("mobile view interactions", () => {
     expect(viewSource).not.toContain('"aria-label": "向 Wiki Copilot 提问"');
   });
 
+  it("adds an explicit mobile-safe web search action and consent dialog", () => {
+    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+
+    expect(viewSource).toContain('this.plugin.requestWebSearchConsent');
+    expect(viewSource).toContain('cls: "wiki-copilot-web-search"');
+    expect(viewSource).toContain('new Modal(this.app)');
+    expect(viewSource).toContain('"view.webSearch.searchNow"');
+    expect(viewSource).toContain('"view.webSearch.rememberSession"');
+    expect(viewSource).toContain('"view.webSearch.cancel"');
+    expect(styles).toContain('.wiki-copilot-web-search');
+    expect(styles).toContain('min-height: 44px');
+  });
+
   it("coalesces mobile textarea measurements to one animation frame", () => {
     expect(viewSource).toContain(
       'this.registerDomEvent(this.queryEl, "input", () => this.scheduleComposerResize())'

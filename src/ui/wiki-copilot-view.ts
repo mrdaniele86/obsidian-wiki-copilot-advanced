@@ -2,6 +2,7 @@ import {
   Component,
   ConfirmationModal,
   ItemView,
+  Modal,
   Notice,
   parseLinktext,
   Platform,
@@ -57,6 +58,7 @@ export class WikiCopilotView extends ItemView {
   private statusEl!: HTMLElement;
   private queryEl!: HTMLTextAreaElement;
   private askButton!: HTMLButtonElement;
+  private webSearchButton!: HTMLButtonElement;
   private historyEl!: HTMLElement;
   private historyToggle!: HTMLButtonElement;
   private historySearchToggle!: HTMLButtonElement;
@@ -280,6 +282,13 @@ export class WikiCopilotView extends ItemView {
     const controls = composer.createDiv({ cls: "wiki-copilot-composer-controls" });
     controls.createSpan({ cls: "wiki-copilot-shortcut", text: this.plugin.t("composer.shortcut") });
     const buttons = controls.createDiv({ cls: "wiki-copilot-composer-buttons" });
+    this.webSearchButton = buttons.createEl("button", {
+      cls: "wiki-copilot-web-search",
+      text: this.plugin.t("view.webSearch.action"),
+      attr: { "aria-label": this.plugin.t("view.webSearch.action") }
+    });
+    this.webSearchButton.disabled = this.plugin.settings.webSearch.mode === "disabled";
+    this.registerDomEvent(this.webSearchButton, "click", () => this.openWebSearchConsent());
     this.askButton = buttons.createEl("button", { cls: "mod-cta", text: this.plugin.t("composer.send") });
     this.registerDomEvent(this.askButton, "mousedown", (event) => {
       if (Platform.isMobile) {
@@ -295,6 +304,42 @@ export class WikiCopilotView extends ItemView {
         void this.ask();
       }
     });
+  }
+
+  private openWebSearchConsent(): void {
+    const question = this.queryEl.value.trim();
+    if (!question) {
+      new Notice(this.plugin.t("view.emptyQuestion"));
+      return;
+    }
+    if (this.plugin.settings.webSearch.mode !== "dedicated-gemini") {
+      new Notice(this.plugin.t("view.webSearch.unavailable"));
+      return;
+    }
+    if (this.plugin.requestWebSearchConsent()) {
+      void this.plugin.searchWeb(question);
+      return;
+    }
+
+    const modal = new Modal(this.app);
+    modal.setTitle(this.plugin.t("view.webSearch.consent.title"));
+    modal.contentEl.createEl("p", { text: this.plugin.t("view.webSearch.consent.questionOnly") });
+    modal.contentEl.createEl("p", { text: this.plugin.t("view.webSearch.consent.dataHandling") });
+    const actions = modal.contentEl.createDiv({ cls: "wiki-copilot-web-search-consent-actions" });
+    const searchNow = actions.createEl("button", { cls: "mod-cta", text: this.plugin.t("view.webSearch.searchNow") });
+    this.registerDomEvent(searchNow, "click", () => {
+      modal.close();
+      void this.plugin.searchWeb(question);
+    });
+    const remember = actions.createEl("button", { text: this.plugin.t("view.webSearch.rememberSession") });
+    this.registerDomEvent(remember, "click", () => {
+      this.plugin.webSearchConsent.remember("gemini", this.plugin.settings.webSearch.geminiModel);
+      modal.close();
+      void this.plugin.searchWeb(question);
+    });
+    const cancel = actions.createEl("button", { text: this.plugin.t("view.webSearch.cancel") });
+    this.registerDomEvent(cancel, "click", () => modal.close());
+    modal.open();
   }
 
   private renderWelcome(): void {

@@ -294,10 +294,11 @@ export class WikiCopilotView extends ItemView {
     const buttons = controls.createDiv({ cls: "wiki-copilot-composer-buttons" });
     this.webSearchButton = buttons.createEl("button", {
       cls: "wiki-copilot-web-search",
-      text: this.plugin.t("view.webSearch.action"),
       attr: { "aria-label": this.plugin.t("view.webSearch.action") }
     });
-    this.webSearchButton.disabled = this.plugin.settings.webSearch.mode === "disabled";
+    setIcon(this.webSearchButton, "search");
+    this.webSearchButton.createSpan({ text: "Web" });
+    this.webSearchButton.disabled = this.busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini";
     this.registerDomEvent(this.webSearchButton, "click", () => void this.openWebSearchConsent());
     this.askButton = buttons.createEl("button", { cls: "mod-cta", text: this.plugin.t("composer.send") });
     this.registerDomEvent(this.askButton, "mousedown", (event) => {
@@ -1178,6 +1179,7 @@ export class WikiCopilotView extends ItemView {
   private setBusy(busy: boolean): void {
     this.busy = busy;
     this.askButton.disabled = false;
+    this.webSearchButton.disabled = busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini";
     this.askButton.setText(busy ? this.plugin.t("composer.stop") : this.plugin.t("composer.send"));
     this.askButton.setAttribute("aria-label", busy ? this.plugin.t("composer.stopAria") : this.plugin.t("composer.sendAria"));
     if (busy) {

@@ -109,6 +109,15 @@ describe("mobile view interactions", () => {
     expect(styles).toContain('min-height: 44px');
   });
 
+  it("refreshes an enabled compact web-search action after Gemini settings change", () => {
+    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+
+    expect(viewSource).toContain('setIcon(this.webSearchButton, "search")');
+    expect(viewSource).toContain('this.webSearchButton.createSpan({ text: "Web" })');
+    expect(viewSource).toContain('this.webSearchButton.disabled = busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini"');
+    expect(styles).toContain('inline-size: 72px');
+  });
+
   it("keeps consent decisions separate from web-search execution", () => {
     const consentMethod = viewSource.match(
       /private requestWebSearchConsent\(\): Promise<[\s\S]*?\{([\s\S]*?)\n  \}/u

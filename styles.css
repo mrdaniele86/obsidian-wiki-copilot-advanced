@@ -817,7 +817,15 @@ body.is-mobile .wiki-copilot-composer-buttons button {
 }
 
 .wiki-copilot-web-search {
+  display: inline-flex;
+  flex: 0 0 72px;
+  inline-size: 72px;
   min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding-inline: 8px;
+  white-space: nowrap;
 }
 
 .wiki-copilot-web-search-consent-actions {

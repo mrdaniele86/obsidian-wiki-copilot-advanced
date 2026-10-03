@@ -43,7 +43,8 @@ export class WebSearchService {
     return client.search({
       question: request.question,
       model: this.options.settings.geminiModel,
-      apiKey: this.options.apiKey.trim()
+      apiKey: this.options.apiKey.trim(),
+      ...(request.history?.length ? { history: request.history } : {})
     });
   }
 }

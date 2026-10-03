@@ -15,4 +15,10 @@ export interface WebSearchResult {
 export interface WebSearchSettings {
   mode: WebSearchMode;
   geminiModel: string;
+  includeRecentChatContext?: boolean;
+}
+
+export interface WebSearchHistoryTurn {
+  role: "user" | "assistant";
+  content: string;
 }

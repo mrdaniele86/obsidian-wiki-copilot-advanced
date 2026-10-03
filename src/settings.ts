@@ -23,7 +23,8 @@ export const DEFAULT_RETRIEVAL_MODE: RetrievalMode = "precise";
 
 export const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
   mode: "disabled",
-  geminiModel: "gemini-2.5-flash"
+  geminiModel: "gemini-2.5-flash",
+  includeRecentChatContext: false
 };
 
 export interface ModelSettings {
@@ -156,7 +157,8 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
     },
     webSearch: {
       mode: webSearchMode,
-      geminiModel: savedGeminiModel || DEFAULT_WEB_SEARCH_SETTINGS.geminiModel
+      geminiModel: savedGeminiModel || DEFAULT_WEB_SEARCH_SETTINGS.geminiModel,
+      includeRecentChatContext: rawWebSearch.includeRecentChatContext === true
     }
   };
 }
@@ -182,7 +184,8 @@ type WikiCopilotSettingKey =
   | "model"
   | "retrievalMode"
   | "webSearchMode"
-  | "webSearchGeminiModel";
+  | "webSearchGeminiModel"
+  | "webSearchIncludeRecentChatContext";
 
 export class WikiCopilotSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: WikiCopilotPlugin) {
@@ -372,6 +375,12 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
                     });
                 });
             }
+          },
+          {
+            name: t("settings.webSearch.includeRecentChatContext.name"),
+            desc: t("settings.webSearch.includeRecentChatContext.desc"),
+            visible: () => this.plugin.settings.webSearch.mode === "dedicated-gemini",
+            control: { type: "toggle", key: "webSearchIncludeRecentChatContext" }
           }
         ]
       }
@@ -396,6 +405,8 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
         return this.plugin.settings.webSearch.mode;
       case "webSearchGeminiModel":
         return this.plugin.settings.webSearch.geminiModel;
+      case "webSearchIncludeRecentChatContext":
+        return this.plugin.settings.webSearch.includeRecentChatContext;
     }
   }
 
@@ -455,6 +466,10 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
         if (typeof value === "string" && value.trim()) {
           this.plugin.settings.webSearch.geminiModel = value.trim();
         }
+        break;
+      case "webSearchIncludeRecentChatContext":
+        if (typeof value !== "boolean") return;
+        this.plugin.settings.webSearch.includeRecentChatContext = value;
         break;
     }
     await this.plugin.saveSettings();

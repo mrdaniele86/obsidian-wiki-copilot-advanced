@@ -32,7 +32,8 @@ describe("retrieval mode settings", () => {
 
     expect(settings.webSearch).toEqual({
       mode: "disabled",
-      geminiModel: "gemini-2.5-flash"
+      geminiModel: "gemini-2.5-flash",
+      includeRecentChatContext: false
     });
     expect(DEFAULT_SETTINGS.webSearch).toEqual(settings.webSearch);
   });
@@ -45,7 +46,8 @@ describe("retrieval mode settings", () => {
 
     expect(settings.webSearch).toEqual({
       mode: "dedicated-gemini",
-      geminiModel: "gemini-3-flash-preview"
+      geminiModel: "gemini-3-flash-preview",
+      includeRecentChatContext: false
     });
   });
 
@@ -55,11 +57,13 @@ describe("retrieval mode settings", () => {
       geminiModel: 42
     } }).webSearch).toEqual({
       mode: "disabled",
-      geminiModel: "gemini-2.5-flash"
+      geminiModel: "gemini-2.5-flash",
+      includeRecentChatContext: false
     });
     expect(loadWikiCopilotSettings({ webSearch: "enabled" }).webSearch).toEqual({
       mode: "disabled",
-      geminiModel: "gemini-2.5-flash"
+      geminiModel: "gemini-2.5-flash",
+      includeRecentChatContext: false
     });
   });
 

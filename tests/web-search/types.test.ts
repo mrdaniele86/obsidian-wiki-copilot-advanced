@@ -39,7 +39,8 @@ describe("web-search settings loader", () => {
   it("uses the expected disabled Gemini defaults", () => {
     expect(DEFAULT_WEB_SEARCH_SETTINGS).toEqual({
       mode: "disabled",
-      geminiModel: "gemini-2.5-flash"
+      geminiModel: "gemini-2.5-flash",
+      includeRecentChatContext: false
     });
     expect(loadWikiCopilotSettings(undefined).webSearch).toEqual(
       DEFAULT_WEB_SEARCH_SETTINGS
@@ -52,7 +53,8 @@ describe("web-search settings loader", () => {
       geminiModel: "gemini-3-flash-preview"
     } }).webSearch).toEqual({
       mode: "disabled",
-      geminiModel: "gemini-3-flash-preview"
+      geminiModel: "gemini-3-flash-preview",
+      includeRecentChatContext: false
     });
   });
 });

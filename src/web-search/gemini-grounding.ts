@@ -1,9 +1,10 @@
-import type { WebSearchResult, WebSource } from "./types";
+import type { WebSearchHistoryTurn, WebSearchResult, WebSource } from "./types";
 
 export interface WebSearchRequest {
   question: string;
   model: string;
   apiKey: string;
+  history?: WebSearchHistoryTurn[];
 }
 
 export type WebSearchErrorCode =
@@ -109,7 +110,15 @@ export class GeminiGroundingClient {
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
           body: JSON.stringify({
-            contents: [{ parts: [{ text: request.question }] }],
+            contents: request.history?.length
+              ? [
+                ...request.history.map((turn) => ({
+                  role: turn.role === "assistant" ? "model" : "user",
+                  parts: [{ text: turn.content }]
+                })),
+                { role: "user", parts: [{ text: request.question }] }
+              ]
+              : [{ parts: [{ text: request.question }] }],
             tools: [{ google_search: {} }]
           })
         }

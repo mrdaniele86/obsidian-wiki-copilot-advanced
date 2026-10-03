@@ -364,6 +364,11 @@ export class WikiCopilotView extends ItemView {
       modal.onClose = () => decide("cancel");
       modal.setTitle(this.plugin.t("view.webSearch.consent.title"));
       modal.contentEl.createEl("p", {
+        text: this.plugin.t("view.webSearch.consent.providerModel", {
+          model: this.plugin.settings.webSearch.geminiModel
+        })
+      });
+      modal.contentEl.createEl("p", {
         text: this.plugin.t(this.plugin.settings.webSearch.includeRecentChatContext
           ? "view.webSearch.consent.recentChat"
           : "view.webSearch.consent.questionOnly")

@@ -129,6 +129,15 @@ describe("mobile view interactions", () => {
     expect(consentMethod).toContain("if (resolved)");
   });
 
+  it("discloses the configured Gemini model in the web-search consent dialog", () => {
+    const consentMethod = viewSource.match(
+      /private requestWebSearchConsent\(\): Promise<[\s\S]*?\{([\s\S]*?)\n  \}/u
+    )?.[1] ?? "";
+
+    expect(consentMethod).toContain('"view.webSearch.consent.providerModel"');
+    expect(consentMethod).toContain("this.plugin.settings.webSearch.geminiModel");
+  });
+
   it("coalesces mobile textarea measurements to one animation frame", () => {
     expect(viewSource).toContain(
       'this.registerDomEvent(this.queryEl, "input", () => this.scheduleComposerResize())'

@@ -297,7 +297,7 @@ export class WikiCopilotView extends ItemView {
       attr: { "aria-label": this.plugin.t("view.webSearch.action") }
     });
     setIcon(this.webSearchButton, "search");
-    this.webSearchButton.createSpan({ text: "Web" });
+    this.webSearchButton.createSpan({ text: this.plugin.t("view.webSearch.compactAction") });
     this.webSearchButton.disabled = this.busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini";
     this.registerDomEvent(this.webSearchButton, "click", () => void this.openWebSearchConsent());
     this.askButton = buttons.createEl("button", { cls: "mod-cta", text: this.plugin.t("composer.send") });

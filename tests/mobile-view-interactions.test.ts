@@ -113,7 +113,7 @@ describe("mobile view interactions", () => {
     const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 
     expect(viewSource).toContain('setIcon(this.webSearchButton, "search")');
-    expect(viewSource).toContain('this.webSearchButton.createSpan({ text: "Web" })');
+    expect(viewSource).toContain('this.webSearchButton.createSpan({ text: this.plugin.t("view.webSearch.compactAction") })');
     expect(viewSource).toContain('this.webSearchButton.disabled = busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini"');
     expect(styles).toContain('inline-size: 72px');
   });

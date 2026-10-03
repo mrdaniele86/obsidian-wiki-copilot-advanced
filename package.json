@@ -1,6 +1,6 @@
 {
   "name": "obsidian-wiki-copilot",
-  "version": "2.1.1-beta.3",
+  "version": "2.1.1-beta.4",
   "description": "Schema-aware, citation-first AI retrieval for persistent LLM Wiki vaults.",
   "main": "main.js",
   "type": "module",

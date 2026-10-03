@@ -23,7 +23,8 @@ import {
 import { localizeModelError } from "./model-response-localization";
 import type { ChatTurn } from "../core/types";
 import { assistantRenderState } from "../chat/conversation-types";
-import type { Conversation } from "../chat/conversation-types";
+import type { Conversation, StoredConversation } from "../chat/conversation-types";
+import { searchConversations } from "../chat/conversation-search";
 import type { ModelResponseMode } from "../llm/openai-compatible";
 import { RequestCancelledError } from "../llm/request-timeout";
 import type WikiCopilotPlugin from "../main";
@@ -58,7 +59,13 @@ export class WikiCopilotView extends ItemView {
   private askButton!: HTMLButtonElement;
   private historyEl!: HTMLElement;
   private historyToggle!: HTMLButtonElement;
+  private historySearchToggle!: HTMLButtonElement;
+  private historySearchInput: HTMLInputElement | null = null;
+  private historyResultsEl: HTMLElement | null = null;
+  private historyConversations: StoredConversation[] = [];
   private historyOpen = false;
+  private historySearchOpen = false;
+  private historySearchQuery = "";
   private turns: ChatTurn[] = [];
   private conversation: Conversation | null = null;
   private conversationPath: string | null = null;
@@ -124,8 +131,9 @@ export class WikiCopilotView extends ItemView {
     container.querySelector(".wiki-copilot-title-group h2")?.setText(this.plugin.t("view.title"));
     const actionButtons = container.querySelectorAll<HTMLButtonElement>(".wiki-copilot-header-actions button");
     actionButtons[0]?.setAttribute("aria-label", this.plugin.t("view.rebuild"));
-    actionButtons[1]?.setAttribute("aria-label", this.plugin.t("view.history"));
-    actionButtons[2]?.setAttribute("aria-label", this.plugin.t("view.newConversation"));
+    actionButtons[1]?.setAttribute("aria-label", this.plugin.t("view.historySearch"));
+    actionButtons[2]?.setAttribute("aria-label", this.plugin.t("view.history"));
+    actionButtons[3]?.setAttribute("aria-label", this.plugin.t("view.newConversation"));
     this.queryEl.setAttribute("placeholder", this.plugin.t("composer.placeholder"));
     container.querySelector(".wiki-copilot-shortcut")?.setText(this.plugin.t("composer.shortcut"));
     this.setBusy(this.busy);
@@ -194,6 +202,16 @@ export class WikiCopilotView extends ItemView {
     setIcon(rebuild, "refresh-cw");
     this.registerDomEvent(rebuild, "click", () => void this.plugin.rebuildIndex());
 
+    this.historySearchToggle = actions.createEl("button", {
+      cls: "clickable-icon wiki-copilot-history-search-toggle",
+      attr: {
+        "aria-label": this.plugin.t("view.historySearch"),
+        "aria-expanded": "false"
+      }
+    });
+    setIcon(this.historySearchToggle, "search");
+    this.registerDomEvent(this.historySearchToggle, "click", () => void this.setHistorySearchOpen(!this.historySearchOpen));
+
     this.historyToggle = actions.createEl("button", {
       cls: "clickable-icon wiki-copilot-history-toggle",
       attr: {
@@ -202,7 +220,7 @@ export class WikiCopilotView extends ItemView {
       }
     });
     setIcon(this.historyToggle, "history");
-    this.registerDomEvent(this.historyToggle, "click", () => this.setHistoryOpen(!this.historyOpen));
+    this.registerDomEvent(this.historyToggle, "click", () => this.setHistoryBrowseOpen());
 
     const clear = actions.createEl("button", {
       cls: "clickable-icon",
@@ -216,6 +234,7 @@ export class WikiCopilotView extends ItemView {
       const target = event.target;
       if (!this.historyOpen || !(target instanceof Node) ||
         this.historyEl.contains(target) || this.historyToggle.contains(target) ||
+        this.historySearchToggle.contains(target) ||
         this.containerEl.ownerDocument.querySelector(".modal-container")) {
         return;
       }
@@ -332,28 +351,31 @@ export class WikiCopilotView extends ItemView {
     if (!this.historyEl) return;
     this.historyEl.empty();
     const history = this.historyEl.createDiv({ cls: "wiki-copilot-history-panel" });
+    if (this.historySearchOpen) {
+      this.historySearchInput = history.createEl("input", {
+        cls: "wiki-copilot-history-search-input",
+        type: "search",
+        value: this.historySearchQuery,
+        attr: {
+          "aria-label": this.plugin.t("view.historySearch"),
+          placeholder: this.plugin.t("view.historySearchPlaceholder")
+        }
+      });
+      this.registerDomEvent(this.historySearchInput, "input", () => {
+        this.historySearchQuery = this.historySearchInput?.value ?? "";
+        void this.renderConversationSearchResults();
+      });
+    } else {
+      this.historySearchInput = null;
+    }
     try {
-      const conversations = await this.plugin.conversations.list(this.plugin.settings.conversationFolder);
-      if (conversations.length === 0) {
+      this.historyConversations = await this.plugin.conversations.list(this.plugin.settings.conversationFolder);
+      if (this.historyConversations.length === 0) {
         history.createDiv({ cls: "wiki-copilot-history-empty", text: this.plugin.t("view.historyEmpty") });
         return;
       }
-      const list = history.createDiv({ cls: "wiki-copilot-history-list" });
-      for (const stored of conversations) {
-        const item = list.createDiv({ cls: "wiki-copilot-history-entry" });
-        const button = item.createEl("button", {
-          cls: "wiki-copilot-history-item",
-          text: stored.conversation.title,
-          attr: { "aria-label": this.plugin.t("view.openConversation", { title: stored.conversation.title }) }
-        });
-        this.registerDomEvent(button, "click", () => void this.openConversation(stored.path));
-        const remove = item.createEl("button", {
-          cls: "clickable-icon wiki-copilot-history-delete",
-          attr: { "aria-label": this.plugin.t("view.deleteConversation", { title: stored.conversation.title }) }
-        });
-        setIcon(remove, "trash-2");
-        this.registerDomEvent(remove, "click", () => this.confirmDeleteConversation(stored.path, stored.conversation.title));
-      }
+      this.historyResultsEl = history.createDiv({ cls: "wiki-copilot-history-list" });
+      this.renderConversationSearchResults();
     } catch (error) {
       console.error("Wiki Copilot: failed to list conversations.", error);
       history.createDiv({ cls: "wiki-copilot-history-error", text: this.plugin.t("view.historyLoadFailed") });
@@ -381,11 +403,91 @@ export class WikiCopilotView extends ItemView {
     }
   }
 
+  private renderConversationSearchResults(): void {
+    if (!this.historyResultsEl) return;
+    this.historyResultsEl.empty();
+    if (!this.historySearchOpen || !this.historySearchQuery.trim()) {
+      for (const stored of this.historyConversations) {
+        this.renderConversationHistoryEntry(stored);
+      }
+      return;
+    }
+
+    const results = searchConversations(this.historyConversations, this.historySearchQuery);
+    if (results.length === 0) {
+      this.historyResultsEl.createDiv({ cls: "wiki-copilot-history-empty", text: this.plugin.t("view.historySearchNoResults") });
+      return;
+    }
+    for (const result of results) {
+      this.renderConversationHistoryEntry(result.stored, result.excerpt);
+    }
+  }
+
+  private renderConversationHistoryEntry(stored: StoredConversation, excerpt?: string): void {
+    if (!this.historyResultsEl) return;
+    const isSearchResult = this.historySearchQuery.trim() && excerpt;
+    const item = this.historyResultsEl.createDiv({ cls: "wiki-copilot-history-entry" });
+    const button = item.createEl("button", {
+      cls: isSearchResult ? "wiki-copilot-history-search-item" : "wiki-copilot-history-item",
+      attr: { "aria-label": this.plugin.t("view.openConversation", { title: stored.conversation.title }) }
+    });
+    button.createDiv({ cls: "wiki-copilot-history-title", text: stored.conversation.title });
+    if (this.historySearchQuery.trim() && excerpt) {
+      button.createDiv({
+        cls: "wiki-copilot-history-excerpt",
+        text: excerpt,
+        attr: { "aria-label": this.plugin.t("view.historySearchExcerpt", { excerpt }) }
+      });
+    }
+    this.registerDomEvent(button, "click", () => {
+      if (isSearchResult) {
+        void (async () => {
+          await this.openConversation(stored.path);
+        })();
+      } else {
+        void this.openConversation(stored.path);
+      }
+    });
+    const remove = item.createEl("button", {
+      cls: "clickable-icon wiki-copilot-history-delete",
+      attr: { "aria-label": this.plugin.t("view.deleteConversation", { title: stored.conversation.title }) }
+    });
+    setIcon(remove, "trash-2");
+    this.registerDomEvent(remove, "click", () => this.confirmDeleteConversation(stored.path, stored.conversation.title));
+  }
+
   private setHistoryOpen(open: boolean): void {
     this.historyOpen = open;
+    if (!open) {
+      this.historySearchOpen = false;
+      this.historySearchQuery = "";
+      this.historySearchInput = null;
+    }
     this.historyEl.toggleClass("is-open", open);
-    this.historyToggle.setAttribute("aria-expanded", String(open));
+    this.historyToggle.setAttribute("aria-expanded", String(open && !this.historySearchOpen));
+    this.historySearchToggle.setAttribute("aria-expanded", String(open && this.historySearchOpen));
     if (open) void this.renderConversationHistory();
+  }
+
+  private async setHistorySearchOpen(open: boolean): Promise<void> {
+    this.historySearchOpen = open;
+    if (open) {
+      this.historySearchQuery = "";
+      this.historyOpen = true;
+      this.historyEl.toggleClass("is-open", true);
+      this.historyToggle.setAttribute("aria-expanded", "false");
+      this.historySearchToggle.setAttribute("aria-expanded", "true");
+      await this.renderConversationHistory();
+      this.historySearchInput?.focus();
+      return;
+    }
+    this.setHistoryOpen(false);
+  }
+
+  private setHistoryBrowseOpen(): void {
+    const shouldOpen = !this.historyOpen || this.historySearchOpen;
+    this.historySearchOpen = false;
+    this.setHistoryOpen(shouldOpen);
   }
 
   private confirmDeleteConversation(path: string, title: string): void {

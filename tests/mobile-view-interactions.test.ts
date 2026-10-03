@@ -103,4 +103,9 @@ describe("mobile view interactions", () => {
     expect(viewSource).toContain("mobileNavigationClearance(");
     expect(viewSource).toContain('container.style.setProperty("--wiki-copilot-mobile-nav-clearance"');
   });
+
+  it("keeps search input and result rows compact enough for mobile history", () => {
+    expect(viewSource).toContain('cls: "wiki-copilot-history-search-input"');
+    expect(viewSource).toContain('"wiki-copilot-history-search-item"');
+  });
 });

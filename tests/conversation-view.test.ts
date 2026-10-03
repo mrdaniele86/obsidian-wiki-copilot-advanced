@@ -34,12 +34,32 @@ describe("persistent conversation view", () => {
     expect(viewSource).toContain('"aria-label": this.plugin.t("view.history")');
     expect(viewSource).toContain('"aria-expanded": "false"');
     expect(viewSource).toContain("setIcon(this.historyToggle, \"history\")");
-    expect(viewSource).toContain("this.setHistoryOpen(!this.historyOpen)");
+    expect(viewSource).toContain("this.setHistoryBrowseOpen()");
     expect(viewSource).toContain('this.registerDomEvent(this.containerEl.ownerDocument, "pointerdown"');
     expect(viewSource).toContain("this.historyEl.contains(target) || this.historyToggle.contains(target)");
     expect(viewSource).toContain('querySelector(".modal-container")');
     expect(viewSource).toContain("this.setHistoryOpen(false);");
     expect(viewSource).not.toContain('history.createEl("summary"');
+  });
+
+  it("offers an accessible fuzzy search panel that restores a selected result", () => {
+    expect(viewSource).toContain('setIcon(this.historySearchToggle, "search")');
+    expect(viewSource).toContain("searchConversations(this.historyConversations, this.historySearchQuery)");
+    expect(viewSource).toContain("this.historySearchInput?.focus()");
+    expect(viewSource).toContain("await this.openConversation(stored.path)");
+  });
+
+  it("focuses the opened search input and keeps it mounted while typing", () => {
+    expect(viewSource).toContain("await this.renderConversationHistory();");
+    expect(viewSource).toContain("this.historySearchInput?.focus();");
+    expect(viewSource).toContain("void this.renderConversationSearchResults()");
+    expect(viewSource).not.toContain("void this.renderConversationHistory();\n      });");
+  });
+
+  it("uses ordinary history rows for a blank search query", () => {
+    expect(viewSource).toContain("!this.historySearchQuery.trim()");
+    expect(viewSource).toContain('"wiki-copilot-history-item"');
+    expect(viewSource).toContain("if (this.historySearchQuery.trim() && excerpt)");
   });
 
   it("persists only complete model exchanges", () => {

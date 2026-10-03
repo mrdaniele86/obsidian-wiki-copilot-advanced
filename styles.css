@@ -714,6 +714,37 @@ body.is-mobile.is-phone .wiki-copilot-composer {
   gap: 4px;
 }
 
+.wiki-copilot-history-search-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: var(--size-4-2);
+}
+
+.wiki-copilot-history-search-item {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: var(--size-4-2);
+  overflow: hidden;
+  text-align: left;
+}
+
+.wiki-copilot-history-title {
+  overflow: hidden;
+  font-weight: var(--font-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wiki-copilot-history-excerpt {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 body.is-mobile .wiki-copilot-history-entry {
   box-sizing: border-box;
   display: flex;
@@ -738,6 +769,15 @@ body.is-mobile .wiki-copilot-history-item {
   background: transparent;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+body.is-mobile .wiki-copilot-history-search-item {
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
 }
 
 body.is-mobile .wiki-copilot-history-delete {

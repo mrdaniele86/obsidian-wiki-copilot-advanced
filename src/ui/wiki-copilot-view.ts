@@ -62,6 +62,7 @@ export class WikiCopilotView extends ItemView {
   private queryEl!: HTMLTextAreaElement;
   private askButton!: HTMLButtonElement;
   private webSearchButton!: HTMLButtonElement;
+  private webSearchLabel!: HTMLElement;
   private historyEl!: HTMLElement;
   private historyToggle!: HTMLButtonElement;
   private historySearchToggle!: HTMLButtonElement;
@@ -141,6 +142,8 @@ export class WikiCopilotView extends ItemView {
     actionButtons[3]?.setAttribute("aria-label", this.plugin.t("view.newConversation"));
     this.queryEl.setAttribute("placeholder", this.plugin.t("composer.placeholder"));
     container.querySelector(".wiki-copilot-shortcut")?.setText(this.plugin.t("composer.shortcut"));
+    this.webSearchLabel.setText(this.plugin.t("view.webSearch.compactAction"));
+    this.webSearchButton.setAttribute("aria-label", this.plugin.t("view.webSearch.action"));
     this.setBusy(this.busy);
     const welcome = this.chatEl?.querySelector(".wiki-copilot-welcome");
     if (welcome) {
@@ -297,7 +300,7 @@ export class WikiCopilotView extends ItemView {
       attr: { "aria-label": this.plugin.t("view.webSearch.action") }
     });
     setIcon(this.webSearchButton, "search");
-    this.webSearchButton.createSpan({ text: this.plugin.t("view.webSearch.compactAction") });
+    this.webSearchLabel = this.webSearchButton.createSpan({ text: this.plugin.t("view.webSearch.compactAction") });
     this.webSearchButton.disabled = this.busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini";
     this.registerDomEvent(this.webSearchButton, "click", () => void this.openWebSearchConsent());
     this.askButton = buttons.createEl("button", { cls: "mod-cta", text: this.plugin.t("composer.send") });

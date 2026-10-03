@@ -114,6 +114,8 @@ describe("mobile view interactions", () => {
 
     expect(viewSource).toContain('setIcon(this.webSearchButton, "search")');
     expect(viewSource).toContain('this.webSearchButton.createSpan({ text: this.plugin.t("view.webSearch.compactAction") })');
+    expect(viewSource).toContain('this.webSearchLabel.setText(this.plugin.t("view.webSearch.compactAction"))');
+    expect(viewSource).toContain('this.webSearchButton.setAttribute("aria-label", this.plugin.t("view.webSearch.action"))');
     expect(viewSource).toContain('this.webSearchButton.disabled = busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini"');
     expect(styles).toContain('inline-size: 72px');
   });

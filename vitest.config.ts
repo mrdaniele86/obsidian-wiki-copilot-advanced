@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 export default defineConfig({
   resolve: {
     alias: {
-      "virtual:source-catalog-worker": fileURLToPath(new URL("./tests/worker-code-stub.ts", import.meta.url))
+      "virtual:source-catalog-worker": fileURLToPath(new URL("./tests/worker-code-stub.ts", import.meta.url)),
+      obsidian: fileURLToPath(new URL("./tests/obsidian-runtime-stub.ts", import.meta.url))
     }
   },
   test: {

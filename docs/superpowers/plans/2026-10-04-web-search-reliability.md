@@ -67,7 +67,7 @@
 **Files:**
 - Modify: `tests/app.web-search-flow.test.ts`
 - Modify: `tests/brat-beta-release.test.ts`
-- Modify: `docs/BRAT-BETA-CHECKLIST.md`
+- Modify: `docs/release/brat-beta-release-checklist.md`
 
 1. Sostituire le asserzioni fragili sul testo del sorgente con verifiche del contratto osservabile dove praticabile.
 2. Rendere la checklist indipendente dal numero di beta.

@@ -51,6 +51,17 @@ describe("retrieval mode settings", () => {
     });
   });
 
+  it("normalizes the legacy current-provider web-search mode to disabled", () => {
+    expect(loadWikiCopilotSettings({ webSearch: {
+      mode: "current-provider",
+      geminiModel: "gemini-3-flash-preview"
+    } }).webSearch).toEqual({
+      mode: "disabled",
+      geminiModel: "gemini-3-flash-preview",
+      includeRecentChatContext: false
+    });
+  });
+
   it("normalizes malformed persisted web-search settings safely", () => {
     expect(loadWikiCopilotSettings({ webSearch: {
       mode: "untrusted-provider",
@@ -189,6 +200,25 @@ describe("settings presentation", () => {
     expect(settingsSource).toContain('key: "webSearchMode"');
     expect(settingsSource).toContain('key: "webSearchGeminiModel"');
     expect(settingsSource).toContain('this.plugin.setWebSearchApiKey(value)');
+  });
+
+  it("offers only disabled and dedicated Gemini web-search modes", () => {
+    const plugin = {
+      settings: loadWikiCopilotSettings(undefined),
+      getApiKey: () => null,
+      t: (key: string) => key
+    };
+    const tab = new WikiCopilotSettingTab({} as never, plugin as never);
+    const definitions = tab.getSettingDefinitions() as unknown as Array<{
+      items?: Array<{ control?: { key?: string; options?: Record<string, string> } }>;
+    }>;
+    const mode = definitions.flatMap((definition) => definition.items ?? [])
+      .find((item) => item.control?.key === "webSearchMode");
+
+    expect(mode?.control?.options).toEqual({
+      disabled: "settings.webSearch.mode.disabled",
+      "dedicated-gemini": "settings.webSearch.mode.dedicatedGemini"
+    });
   });
 
   it("fills a provider suggestion without touching the stored API key", async () => {

@@ -57,10 +57,14 @@ describe("conversation Markdown", () => {
     const webConversation: Conversation = {
       ...conversation,
       turns: [{
+        role: "user",
+        content: "What changed?"
+      }, {
         role: "assistant",
         content: "Current answer.",
         webSearch: {
           provider: "gemini",
+          question: "What changed?",
           model: "gemini-2.5-flash",
           answer: "Current answer.",
           sources: [{ title: "Gemini", url: "https://example.com/current" }]
@@ -71,12 +75,106 @@ describe("conversation Markdown", () => {
     expect(parseConversation(serializeConversation(webConversation))).toEqual(webConversation);
   });
 
+  it.each([
+    ["an empty question", ""],
+    ["an overlong question", "q".repeat(20_001)]
+  ])("discards persisted web metadata with %s", (_case, question) => {
+    const serialized = serializeConversation({
+      ...conversation,
+      turns: [{
+        role: "user",
+        content: "A valid paired question"
+      }, {
+        role: "assistant",
+        content: "Answer",
+        webSearch: ({
+          provider: "gemini",
+          question,
+          model: "gemini-2.5-flash",
+          answer: "Answer",
+          sources: [{ title: "Source", url: "https://example.com" }]
+        } as never)
+      }]
+    });
+
+    expect(parseConversation(serialized)?.turns).toEqual([
+      { role: "user", content: "A valid paired question" },
+      { role: "assistant", content: "Answer" }
+    ]);
+  });
+
+  it("keeps legacy web metadata only when its immediately preceding user question is valid", () => {
+    const legacyWithPair = serializeConversation({
+      ...conversation,
+      turns: [{ role: "user", content: "A valid legacy question" }, {
+        role: "assistant",
+        content: "Answer",
+        webSearch: {
+          provider: "gemini",
+          model: "gemini-2.5-flash",
+          answer: "Answer",
+          sources: [{ title: "Source", url: "https://example.com" }]
+        }
+      }]
+    });
+
+    expect(parseConversation(legacyWithPair)?.turns[1]).toMatchObject({
+      webSearch: { provider: "gemini", answer: "Answer" }
+    });
+  });
+
   it("discards malformed web search metadata while preserving its assistant turn", () => {
     const serialized = serializeConversation({
       ...conversation,
       turns: [{ role: "assistant", content: "Answer", webSearch: ({
         provider: "invalid", model: "gemini-2.5-flash", answer: "Answer", sources: []
       } as never) }]
+    });
+
+    expect(parseConversation(serialized)?.turns).toEqual([{ role: "assistant", content: "Answer" }]);
+  });
+
+  it.each([
+    ["an HTTP source URL", { title: "Source", url: "http://example.com" }],
+    ["an empty source title", { title: "", url: "https://example.com" }],
+    ["an overlong source title", { title: "a".repeat(501), url: "https://example.com" }],
+    ["an overlong source URL", { title: "Source", url: `https://example.com/${"a".repeat(2_049)}` }]
+  ])("discards persisted web metadata with %s while retaining Vault sources", (_case, source) => {
+    const serialized = serializeConversation({
+      ...conversation,
+      turns: [{
+        role: "assistant",
+        content: "Answer",
+        sources: conversation.turns[1]?.role === "assistant" ? conversation.turns[1].sources : [],
+        webSearch: { provider: "gemini", model: "gemini-2.5-flash", answer: "Answer", sources: [source] }
+      }]
+    });
+
+    expect(parseConversation(serialized)?.turns).toEqual([{
+      role: "assistant",
+      content: "Answer",
+      sources: conversation.turns[1]?.role === "assistant" ? conversation.turns[1].sources : []
+    }]);
+  });
+
+  it.each([
+    ["an empty model", { model: "", answer: "Answer", sources: [{ title: "Source", url: "https://example.com" }] }],
+    ["an overlong model", { model: "m".repeat(201), answer: "Answer", sources: [{ title: "Source", url: "https://example.com" }] }],
+    ["an empty answer", { model: "gemini-2.5-flash", answer: "", sources: [{ title: "Source", url: "https://example.com" }] }],
+    ["more than twelve sources", {
+      model: "gemini-2.5-flash",
+      answer: "Answer",
+      sources: Array.from({ length: 13 }, (_, index) => ({ title: `Source ${index}`, url: `https://example.com/${index}` }))
+    }],
+    ["an overlong answer", {
+      model: "gemini-2.5-flash",
+      answer: "a".repeat(20_001),
+      sources: [{ title: "Source", url: "https://example.com" }]
+    }]
+  ])("discards persisted web metadata with %s", (_case, webSearch) => {
+    const serialized = serializeConversation({
+      ...conversation,
+      turns: [{ role: "assistant", content: "Answer", webSearch: ({ provider: "gemini", ...webSearch } as never) }]
     });
 
     expect(parseConversation(serialized)?.turns).toEqual([{ role: "assistant", content: "Answer" }]);

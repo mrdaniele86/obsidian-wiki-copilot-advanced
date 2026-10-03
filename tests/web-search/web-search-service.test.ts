@@ -42,4 +42,37 @@ describe("WebSearchService", () => {
       apiKey: "dedicated-key"
     });
   });
+
+  it("forwards the caller cancellation signal to the grounding client", async () => {
+    const search = vi.fn(async (_request: unknown) => ({
+      provider: "gemini" as const, model: "gemini-2.5-flash", answer: "Answer", sources: []
+    }));
+    const service = new WebSearchService({ settings: dedicated, apiKey: "dedicated-key", client: { search } });
+    const caller = new AbortController();
+
+    await service.search({ question: "Question", model: "ignored", apiKey: "ignored", signal: caller.signal });
+
+    expect(search).toHaveBeenCalledWith({
+      question: "Question",
+      model: "gemini-2.5-flash",
+      apiKey: "dedicated-key",
+      signal: caller.signal
+    });
+  });
+
+  it("does not hand a cancelled operation to a grounding client that could return answer sources", async () => {
+    const search = vi.fn(async () => ({
+      provider: "gemini" as const,
+      model: "gemini-2.5-flash",
+      answer: "Must not reach the view",
+      sources: [{ title: "Must not persist", url: "https://example.test/source" }]
+    }));
+    const service = new WebSearchService({ settings: dedicated, apiKey: "dedicated-key", client: { search } });
+    const caller = new AbortController();
+    caller.abort();
+
+    await expect(service.search({ question: "Question", model: "ignored", apiKey: "ignored", signal: caller.signal }))
+      .rejects.toMatchObject({ code: "cancelled" });
+    expect(search).not.toHaveBeenCalled();
+  });
 });

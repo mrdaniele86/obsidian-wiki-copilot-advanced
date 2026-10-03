@@ -1,6 +1,11 @@
 import type { AssistantConversationTurn, Conversation, ConversationRole, ConversationTurn } from "./conversation-types";
 
 const CONVERSATION_TYPE = "wiki-copilot-conversation";
+const MAX_WEB_SEARCH_MODEL_CHARACTERS = 200;
+const MAX_WEB_SEARCH_ANSWER_CHARACTERS = 20_000;
+const MAX_WEB_SEARCH_SOURCES = 12;
+const MAX_WEB_SEARCH_SOURCE_TITLE_CHARACTERS = 500;
+const MAX_WEB_SEARCH_SOURCE_URL_CHARACTERS = 2_048;
 
 function frontmatterValue(value: string): string {
   return JSON.stringify(value);
@@ -44,18 +49,25 @@ function assistantState(turn: ConversationTurn): string {
   return encodeText(JSON.stringify({ sources: turn.sources, knowledgeBaseHit: turn.knowledgeBaseHit, webSearch: turn.webSearch }));
 }
 
-function isWebSearchResult(value: unknown): value is NonNullable<AssistantConversationTurn["webSearch"]> {
+function isWebSearchResult(value: unknown, legacyQuestion?: string): value is NonNullable<AssistantConversationTurn["webSearch"]> {
   if (!value || typeof value !== "object") return false;
-  const { provider, model, answer, sources } = value as Record<string, unknown>;
-  return provider === "gemini" && typeof model === "string" && typeof answer === "string" && Array.isArray(sources) && sources.every((source) => {
+  const { provider, question, model, answer, sources } = value as Record<string, unknown>;
+  const validQuestion = question === undefined
+    ? isBoundedNonEmptyString(legacyQuestion, MAX_WEB_SEARCH_ANSWER_CHARACTERS)
+    : isBoundedNonEmptyString(question, MAX_WEB_SEARCH_ANSWER_CHARACTERS);
+  return provider === "gemini" && validQuestion && isBoundedNonEmptyString(model, MAX_WEB_SEARCH_MODEL_CHARACTERS) && isBoundedNonEmptyString(answer, MAX_WEB_SEARCH_ANSWER_CHARACTERS) && Array.isArray(sources) && sources.length > 0 && sources.length <= MAX_WEB_SEARCH_SOURCES && sources.every((source) => {
     if (!source || typeof source !== "object") return false;
     const { title, url } = source as Record<string, unknown>;
-    if (typeof title !== "string" || typeof url !== "string") return false;
-    try { const protocol = new URL(url).protocol; return protocol === "http:" || protocol === "https:"; } catch { return false; }
+    if (!isBoundedNonEmptyString(title, MAX_WEB_SEARCH_SOURCE_TITLE_CHARACTERS) || !isBoundedNonEmptyString(url, MAX_WEB_SEARCH_SOURCE_URL_CHARACTERS)) return false;
+    try { return new URL(url).protocol === "https:"; } catch { return false; }
   });
 }
 
-function parseAssistantState(value: string): Pick<AssistantConversationTurn, "sources" | "knowledgeBaseHit" | "webSearch"> | null {
+function isBoundedNonEmptyString(value: unknown, maximumLength: number): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= maximumLength;
+}
+
+function parseAssistantState(value: string, legacyQuestion?: string): Pick<AssistantConversationTurn, "sources" | "knowledgeBaseHit" | "webSearch"> | null {
   const decoded = decodeText(value);
   if (decoded === null) return null;
   try {
@@ -64,7 +76,7 @@ function parseAssistantState(value: string): Pick<AssistantConversationTurn, "so
     const { sources, knowledgeBaseHit, webSearch } = state as { sources?: unknown; knowledgeBaseHit?: unknown; webSearch?: unknown };
     if (sources !== undefined && !Array.isArray(sources)) return null;
     if (knowledgeBaseHit !== undefined && typeof knowledgeBaseHit !== "boolean") return null;
-    return { sources: sources as AssistantConversationTurn["sources"], knowledgeBaseHit, ...(isWebSearchResult(webSearch) ? { webSearch } : {}) };
+    return { sources: sources as AssistantConversationTurn["sources"], knowledgeBaseHit, ...(isWebSearchResult(webSearch, legacyQuestion) ? { webSearch } : {}) };
   } catch {
     return null;
   }
@@ -83,7 +95,8 @@ function parseTurns(markdown: string): ConversationTurn[] | null {
     if (content === null) return null;
     const role: ConversationRole = section[1] === "User" ? "user" : "assistant";
     if (role === "assistant" && section[3]) {
-      const state = parseAssistantState(section[3]);
+      const previousTurn = turns.at(-1);
+      const state = parseAssistantState(section[3], previousTurn?.role === "user" ? previousTurn.content : undefined);
       if (!state) return null;
       turns.push({ role, content, ...state });
     } else {

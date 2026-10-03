@@ -5,6 +5,7 @@ export interface WebSearchRequest {
   model: string;
   apiKey: string;
   history?: WebSearchHistoryTurn[];
+  signal?: AbortSignal;
 }
 
 export type WebSearchErrorCode =
@@ -13,6 +14,7 @@ export type WebSearchErrorCode =
   | "invalid-model"
   | "network"
   | "timeout"
+  | "cancelled"
   | "malformed-response"
   | "no-answer"
   | "no-sources"
@@ -98,9 +100,19 @@ export class GeminiGroundingClient {
   async search(request: WebSearchRequest): Promise<WebSearchResult> {
     const apiKey = request.apiKey.trim();
     if (!apiKey) throw new WebSearchError("invalid-key");
+    if (request.signal?.aborted) throw new WebSearchError("cancelled");
 
     const controller = new AbortController();
-    const timeout = this.timerHost.setTimeout(() => controller.abort(), this.timeoutMilliseconds);
+    let abortCause: "cancelled" | "timeout" | null = null;
+    const cancelForCaller = (): void => {
+      abortCause ??= "cancelled";
+      controller.abort();
+    };
+    request.signal?.addEventListener("abort", cancelForCaller, { once: true });
+    const timeout = this.timerHost.setTimeout(() => {
+      abortCause ??= "timeout";
+      controller.abort();
+    }, this.timeoutMilliseconds);
     let response: Response;
     try {
       response = await this.fetcher(
@@ -124,10 +136,13 @@ export class GeminiGroundingClient {
         }
       );
     } catch {
-      throw new WebSearchError(controller.signal.aborted ? "timeout" : "network");
+      throw new WebSearchError(abortCause ?? (controller.signal.aborted ? "timeout" : "network"));
     } finally {
       this.timerHost.clearTimeout(timeout);
+      request.signal?.removeEventListener("abort", cancelForCaller);
     }
+
+    if (abortCause === "cancelled") throw new WebSearchError("cancelled");
 
     if (response.status === 401 || response.status === 403) throw new WebSearchError("invalid-key");
     if (response.status === 429) throw new WebSearchError("quota");
@@ -140,6 +155,7 @@ export class GeminiGroundingClient {
     } catch {
       throw new WebSearchError("malformed-response");
     }
+    if (abortCause === "cancelled" || request.signal?.aborted) throw new WebSearchError("cancelled");
     const candidate = candidateFrom(payload);
     const answer = answerFrom(candidate);
     const sources = sourcesFrom(candidate);
@@ -147,6 +163,7 @@ export class GeminiGroundingClient {
 
     return {
       provider: "gemini",
+      question: request.question,
       model: request.model,
       answer,
       sources

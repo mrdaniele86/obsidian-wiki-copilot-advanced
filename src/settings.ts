@@ -126,7 +126,7 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
     ? raw.retrievalMode
     : DEFAULT_RETRIEVAL_MODE;
   const retrievalSettings = retrievalSettingsForMode(retrievalMode);
-  const webSearchMode = isWebSearchMode(rawWebSearch.mode)
+  const webSearchMode = rawWebSearch.mode === "dedicated-gemini"
     ? rawWebSearch.mode
     : DEFAULT_WEB_SEARCH_SETTINGS.mode;
   const savedGeminiModel = typeof rawWebSearch.geminiModel === "string"
@@ -334,20 +334,8 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
               key: "webSearchMode",
               options: {
                 disabled: t("settings.webSearch.mode.disabled"),
-                "current-provider": t("settings.webSearch.mode.currentProvider"),
                 "dedicated-gemini": t("settings.webSearch.mode.dedicatedGemini")
               }
-            }
-          },
-          {
-            name: t("settings.webSearch.currentProvider.name"),
-            desc: t("settings.webSearch.currentProvider.desc"),
-            visible: () => this.plugin.settings.webSearch.mode === "current-provider",
-            render: (setting) => {
-              setting
-                .setName(t("settings.webSearch.currentProvider.name"))
-                .setDesc(t("settings.webSearch.currentProvider.desc"))
-                .setDisabled(true);
             }
           },
           {
@@ -458,7 +446,7 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
         break;
       case "webSearchMode":
         if (!isWebSearchMode(value)) return;
-        this.plugin.settings.webSearch.mode = value;
+        this.plugin.settings.webSearch.mode = value === "dedicated-gemini" ? value : "disabled";
         await this.plugin.saveSettings();
         this.update();
         return;

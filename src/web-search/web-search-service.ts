@@ -38,13 +38,15 @@ export class WebSearchService {
   async search(request: WebSearchRequest): Promise<WebSearchResult> {
     const capability = this.capability();
     if (!capability.available) throw new WebSearchError(capability.reason ?? "network");
+    if (request.signal?.aborted) throw new WebSearchError("cancelled");
 
     const client = this.options.client ?? new GeminiGroundingClient();
     return client.search({
       question: request.question,
       model: this.options.settings.geminiModel,
       apiKey: this.options.apiKey.trim(),
-      ...(request.history?.length ? { history: request.history } : {})
+      ...(request.history?.length ? { history: request.history } : {}),
+      ...(request.signal ? { signal: request.signal } : {})
     });
   }
 }

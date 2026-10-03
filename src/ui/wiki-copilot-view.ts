@@ -657,10 +657,13 @@ export class WikiCopilotView extends ItemView {
       return;
     }
     const sequence = ++this.requestSequence;
+    const requestController = new AbortController();
+    this.activeRequest = requestController;
     this.setBusy(true);
     const loading = this.appendLoading(this.plugin.t("view.webSearch.preparing"));
     try {
-      const result = await this.plugin.searchWeb(question, history);
+      const result = await this.plugin.searchWeb(question, history, requestController.signal);
+      if (requestController.signal.aborted) throw new WebSearchError("cancelled");
       if (sequence !== this.requestSequence) return;
       loading.remove();
       this.chatEl.querySelector(".wiki-copilot-welcome")?.remove();
@@ -681,6 +684,10 @@ export class WikiCopilotView extends ItemView {
     } catch (error) {
       if (sequence !== this.requestSequence) return;
       loading.remove();
+      if (error instanceof WebSearchError && error.code === "cancelled") {
+        this.appendStoppedMessage();
+        return;
+      }
       let errorContainer: HTMLElement | null = null;
       errorContainer = this.appendError(error, {
         label: this.plugin.t("view.webSearch.retry"),
@@ -690,6 +697,7 @@ export class WikiCopilotView extends ItemView {
         }
       }, this.localizeWebSearchError(error));
     } finally {
+      if (this.activeRequest === requestController) this.activeRequest = null;
       if (sequence === this.requestSequence) this.setBusy(false);
     }
   }

@@ -328,7 +328,7 @@ export default class WikiCopilotPlugin extends Plugin {
     this.refreshOpenViews();
   }
 
-  async searchWeb(question: string, history?: WebSearchHistoryTurn[]): Promise<WebSearchResult> {
+  async searchWeb(question: string, history?: WebSearchHistoryTurn[], signal?: AbortSignal): Promise<WebSearchResult> {
     const apiKey = this.getWebSearchApiKey() ?? "";
     const service = new WebSearchService({
       settings: this.settings.webSearch,
@@ -338,7 +338,8 @@ export default class WikiCopilotPlugin extends Plugin {
       question,
       model: this.settings.webSearch.geminiModel,
       apiKey,
-      ...(history?.length ? { history } : {})
+      ...(history?.length ? { history } : {}),
+      ...(signal ? { signal } : {})
     });
   }
 

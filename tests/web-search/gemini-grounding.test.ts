@@ -62,6 +62,7 @@ describe("GeminiGroundingClient", () => {
 
     await expect(client.search(request)).resolves.toEqual({
       provider: "gemini",
+      question: "What temperature does Misti use?",
       model: "gemini-2.5-flash",
       answer: "Misti uses 30 °C.",
       sources: [{ title: "Manuale", url: "https://manual.example/misti" }]
@@ -134,5 +135,40 @@ describe("GeminiGroundingClient", () => {
 
     await expect(client.search(request)).rejects.toMatchObject({ code: "timeout" });
     expect(fetcher.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it("propagates a caller cancellation distinctly from its timeout", async () => {
+    const caller = new AbortController();
+    const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    const client = groundingClient(fetcher);
+    const pending = client.search({ ...request, signal: caller.signal });
+
+    caller.abort();
+
+    await expect(pending).rejects.toMatchObject({ code: "cancelled" });
+    expect(fetcher.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it("keeps timeout as the cause when caller cancellation follows it", async () => {
+    const caller = new AbortController();
+    let timeoutHandler: (() => void) | undefined;
+    const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    const client = new GeminiGroundingClient(fetcher, 30_000, {
+      setTimeout: (handler) => {
+        timeoutHandler = handler;
+        return 1;
+      },
+      clearTimeout: () => undefined
+    });
+    const pending = client.search({ ...request, signal: caller.signal });
+
+    timeoutHandler?.();
+    caller.abort();
+
+    await expect(pending).rejects.toMatchObject({ code: "timeout" });
   });
 });

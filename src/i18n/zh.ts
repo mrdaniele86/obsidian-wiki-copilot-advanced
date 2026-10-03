@@ -1,6 +1,7 @@
 import { en } from "./en";
 
 export const zh: Record<keyof typeof en, string> = { ...en,
+  "view.webSearch.sources": "来自 {{provider}} 的网络来源（{{count}}）",
   "view.webSearch.action": "搜索网络", "view.webSearch.unavailable": "所选模式暂不支持网络搜索。", "view.webSearch.consent.title": "使用 Gemini 搜索网络？", "view.webSearch.consent.questionOnly": "只有您输入的问题会发送到 Gemini；不会发送 Vault、当前笔记、对话历史或模型凭据。", "view.webSearch.consent.dataHandling": "Gemini 会依照 Google 服务的数据处理惯例处理该问题。", "view.webSearch.searchNow": "立即搜索", "view.webSearch.rememberSession": "在本次会话中记住", "view.webSearch.cancel": "取消",
   "settings.webSearch.heading": "网络搜索", "settings.webSearch.mode.name": "网络搜索模式", "settings.webSearch.mode.desc": "网络搜索为可选功能，发送问题前需要明确同意。", "settings.webSearch.mode.disabled": "已禁用", "settings.webSearch.mode.currentProvider": "使用当前提供商（暂不支持）", "settings.webSearch.mode.dedicatedGemini": "专用 Gemini", "settings.webSearch.currentProvider.name": "当前提供商", "settings.webSearch.currentProvider.desc": "当前提供商暂不能搜索网络。请选择专用 Gemini 以使用受支持的 Google Search 适配器。", "settings.webSearch.geminiModel.name": "Gemini 模型", "settings.webSearch.geminiModel.desc": "仅用于网络搜索的 Gemini 模型。", "settings.webSearch.apiKey.name": "Gemini API 密钥", "settings.webSearch.apiKey.desc": "密钥单独保存在 Obsidian 安全存储中，不会与聊天模型密钥混用。", "settings.webSearch.apiKey.placeholder": "输入 Gemini API 密钥",
   "settings.interface.heading": "界面", "settings.interface.language.name": "界面语言", "settings.interface.language.desc": "选择界面语言。",

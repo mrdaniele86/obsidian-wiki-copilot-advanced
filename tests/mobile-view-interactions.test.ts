@@ -11,6 +11,10 @@ const coordinatorSource = readFileSync(new URL("../src/obsidian/index-coordinato
 const retrieverSource = readFileSync(new URL("../src/core/hybrid-retriever.ts", import.meta.url), "utf8");
 
 describe("mobile view interactions", () => {
+  it("keeps web sources as external links rather than vault citations", () => {
+    expect(viewSource).toContain('cls: "wiki-copilot-web-sources"');
+    expect(viewSource).toContain('target: "_blank", rel: "noopener noreferrer"');
+  });
   it("keeps user-facing Chinese literals in the translation dictionaries", () => {
     expect(mainSource.replace(/console\.(warn|error)\([^\n]+/gu, "")).not.toMatch(/[\p{Script=Han}]/u);
     expect(settingsSource).not.toMatch(/[\p{Script=Han}]/u);

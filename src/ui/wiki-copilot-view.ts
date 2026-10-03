@@ -39,12 +39,13 @@ import {
 } from "./composer-focus";
 import { findExpandedSourceButton } from "./source-highlight";
 import { StreamingMarkdownRenderer } from "./streaming-markdown-renderer";
+import type { WebSearchResult } from "../web-search/types";
 
 export const WIKI_COPILOT_VIEW_TYPE = "wiki-copilot-view";
 
 interface AssistantMessageHandle {
   update(markdown: string): void;
-  finish(markdown: string, sources: SourceReference[]): Promise<void>;
+  finish(markdown: string, sources: SourceReference[], webSearch?: WebSearchResult): Promise<void>;
   interrupt(markdown: string, sources: SourceReference[], message: string): Promise<void>;
 }
 
@@ -575,7 +576,7 @@ export class WikiCopilotView extends ItemView {
       if (turn.role === "user") this.appendUserMessage(turn.content);
       else {
         const state = assistantRenderState(turn);
-        void this.appendAssistantMessage(turn.content, state.sources, state.knowledgeBaseHit);
+        void this.appendAssistantMessage(turn.content, state.sources, state.knowledgeBaseHit, state.webSearch);
       }
     }
     this.queryEl.value = "";
@@ -825,10 +826,11 @@ export class WikiCopilotView extends ItemView {
   private async appendAssistantMessage(
     markdown: string,
     sources: SourceReference[],
-    knowledgeBaseHit: boolean
+    knowledgeBaseHit: boolean,
+    webSearch?: WebSearchResult
   ): Promise<void> {
     const message = this.appendStreamingAssistantMessage(knowledgeBaseHit);
-    await message.finish(markdown, sources);
+    await message.finish(markdown, sources, webSearch);
   }
 
   private appendStreamingAssistantMessage(knowledgeBaseHit: boolean): AssistantMessageHandle {
@@ -864,7 +866,7 @@ export class WikiCopilotView extends ItemView {
           renderer.update(streamedMarkdown);
         }
       },
-      finish: async (finalMarkdown, finalSources) => {
+      finish: async (finalMarkdown, finalSources, webSearch) => {
         if (finalized) {
           return;
         }
@@ -874,6 +876,7 @@ export class WikiCopilotView extends ItemView {
         const keepPinned = this.isNearBottom();
         this.registerCitationLinks(body, finalSources);
         this.renderSources(body, finalSources);
+        this.renderWebSources(body, webSearch);
         if (keepPinned) {
           this.scrollToBottom();
         }
@@ -958,6 +961,16 @@ export class WikiCopilotView extends ItemView {
         void this.openCitation(source);
       });
     });
+  }
+
+  private renderWebSources(container: HTMLElement, webSearch?: WebSearchResult): void {
+    if (!webSearch || webSearch.sources.length === 0) return;
+    const details = container.createEl("details", { cls: "wiki-copilot-web-sources" });
+    details.createEl("summary", { text: this.plugin.t("view.webSearch.sources", { provider: webSearch.provider, count: webSearch.sources.length }) });
+    const list = details.createDiv({ cls: "wiki-copilot-web-source-list" });
+    for (const source of webSearch.sources) {
+      list.createEl("a", { cls: "wiki-copilot-web-source", text: source.title, attr: { href: source.url, target: "_blank", rel: "noopener noreferrer" } });
+    }
   }
 
   private registerCitationLinks(container: HTMLElement, sources: SourceReference[]): void {

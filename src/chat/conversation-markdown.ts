@@ -40,20 +40,31 @@ function decodeText(value: string): string | null {
 }
 
 function assistantState(turn: ConversationTurn): string {
-  if (turn.role !== "assistant" || (turn.sources === undefined && turn.knowledgeBaseHit === undefined)) return "";
-  return encodeText(JSON.stringify({ sources: turn.sources, knowledgeBaseHit: turn.knowledgeBaseHit }));
+  if (turn.role !== "assistant" || (turn.sources === undefined && turn.knowledgeBaseHit === undefined && turn.webSearch === undefined)) return "";
+  return encodeText(JSON.stringify({ sources: turn.sources, knowledgeBaseHit: turn.knowledgeBaseHit, webSearch: turn.webSearch }));
 }
 
-function parseAssistantState(value: string): Pick<AssistantConversationTurn, "sources" | "knowledgeBaseHit"> | null {
+function isWebSearchResult(value: unknown): value is NonNullable<AssistantConversationTurn["webSearch"]> {
+  if (!value || typeof value !== "object") return false;
+  const { provider, model, answer, sources } = value as Record<string, unknown>;
+  return provider === "gemini" && typeof model === "string" && typeof answer === "string" && Array.isArray(sources) && sources.every((source) => {
+    if (!source || typeof source !== "object") return false;
+    const { title, url } = source as Record<string, unknown>;
+    if (typeof title !== "string" || typeof url !== "string") return false;
+    try { const protocol = new URL(url).protocol; return protocol === "http:" || protocol === "https:"; } catch { return false; }
+  });
+}
+
+function parseAssistantState(value: string): Pick<AssistantConversationTurn, "sources" | "knowledgeBaseHit" | "webSearch"> | null {
   const decoded = decodeText(value);
   if (decoded === null) return null;
   try {
     const state: unknown = JSON.parse(decoded);
     if (!state || typeof state !== "object") return null;
-    const { sources, knowledgeBaseHit } = state as { sources?: unknown; knowledgeBaseHit?: unknown };
+    const { sources, knowledgeBaseHit, webSearch } = state as { sources?: unknown; knowledgeBaseHit?: unknown; webSearch?: unknown };
     if (sources !== undefined && !Array.isArray(sources)) return null;
     if (knowledgeBaseHit !== undefined && typeof knowledgeBaseHit !== "boolean") return null;
-    return { sources: sources as AssistantConversationTurn["sources"], knowledgeBaseHit };
+    return { sources: sources as AssistantConversationTurn["sources"], knowledgeBaseHit, ...(isWebSearchResult(webSearch) ? { webSearch } : {}) };
   } catch {
     return null;
   }

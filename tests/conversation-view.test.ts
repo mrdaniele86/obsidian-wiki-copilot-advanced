@@ -70,6 +70,12 @@ describe("persistent conversation view", () => {
     expect(viewSource).toContain("await this.saveConversation()");
   });
 
+  it("renders stored web sources in their own external-link block", () => {
+    expect(viewSource).toContain("this.renderWebSources(body, webSearch)");
+    expect(viewSource).toContain('cls: "wiki-copilot-web-sources"');
+    expect(viewSource).toContain('attr: { href: source.url, target: "_blank", rel: "noopener noreferrer" }');
+  });
+
   it("uses a vault-backed store and configurable folder", () => {
     expect(mainSource).toContain("new ConversationStore(this.app.vault)");
     expect(settingsSource).toContain("conversationFolder");

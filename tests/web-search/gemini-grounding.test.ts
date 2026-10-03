@@ -18,12 +18,22 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function groundingClient(fetcher: ConstructorParameters<typeof GeminiGroundingClient>[0], timeout = 30_000) {
+  return new GeminiGroundingClient(fetcher, timeout, {
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout
+  });
+}
+
 describe("GeminiGroundingClient", () => {
   it("sends only the question with Google Search grounding", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
-      candidates: [{ content: { parts: [{ text: "Misti uses 30 °C." }] } }]
+      candidates: [{
+        content: { parts: [{ text: "Misti uses 30 °C." }] },
+        groundingMetadata: { groundingChunks: [{ web: { uri: "https://example.test/misti", title: "Misti" } }] }
+      }]
     }));
-    const client = new GeminiGroundingClient(fetcher);
+    const client = groundingClient(fetcher);
 
     await client.search(request);
 
@@ -38,7 +48,7 @@ describe("GeminiGroundingClient", () => {
   });
 
   it("extracts text and deduplicated HTTPS grounding URLs", async () => {
-    const client = new GeminiGroundingClient(async () => jsonResponse({
+    const client = groundingClient(async () => jsonResponse({
       candidates: [{
         content: { parts: [{ text: "Misti uses 30 °C." }] },
         groundingMetadata: { groundingChunks: [
@@ -62,7 +72,7 @@ describe("GeminiGroundingClient", () => {
     const chunks = Array.from({ length: 13 }, (_, index) => ({
       web: { uri: `https://example.test/${index}`, title: `Source ${index}` }
     }));
-    const client = new GeminiGroundingClient(async () => jsonResponse({
+    const client = groundingClient(async () => jsonResponse({
       candidates: [{ content: { parts: [{ text: "Answer" }] }, groundingMetadata: { groundingChunks: chunks } }]
     }));
 
@@ -77,35 +87,52 @@ describe("GeminiGroundingClient", () => {
   it.each([
     [401, "invalid-key"],
     [403, "invalid-key"],
-    [429, "quota"]
+    [429, "quota"],
+    [400, "invalid-model"],
+    [404, "invalid-model"]
   ] as const)("maps HTTP %i to %s", async (status, code) => {
-    const client = new GeminiGroundingClient(async () => jsonResponse({ error: { message: "failure" } }, status));
+    const client = groundingClient(async () => jsonResponse({ error: { message: "failure" } }, status));
     await expect(client.search(request)).rejects.toMatchObject({ code });
   });
 
   it("maps fetch failures to network", async () => {
-    const client = new GeminiGroundingClient(async () => { throw new TypeError("Failed to fetch"); });
+    const client = groundingClient(async () => { throw new TypeError("Failed to fetch"); });
     await expect(client.search(request)).rejects.toMatchObject({ code: "network" });
   });
 
   it("rejects malformed response JSON", async () => {
-    const client = new GeminiGroundingClient(async () => new Response("not json", { status: 200 }));
+    const client = groundingClient(async () => new Response("not json", { status: 200 }));
     await expect(client.search(request)).rejects.toMatchObject({ code: "malformed-response" });
   });
 
   it("rejects a structurally valid response with no answer", async () => {
-    const client = new GeminiGroundingClient(async () => jsonResponse({ candidates: [{ content: { parts: [] } }] }));
+    const client = groundingClient(async () => jsonResponse({ candidates: [{ content: { parts: [] } }] }));
     await expect(client.search(request)).rejects.toBeInstanceOf(WebSearchError);
     await expect(client.search(request)).rejects.toMatchObject({ code: "no-answer" });
   });
 
-  it("allows an answer with no usable web sources", async () => {
-    const client = new GeminiGroundingClient(async () => jsonResponse({
+  it.each([
+    { content: { parts: [null] } },
+    { content: { parts: [{ text: "Answer" }] }, groundingMetadata: { groundingChunks: [null] } }
+  ])("rejects null nested response values as malformed", async (candidate) => {
+    const client = groundingClient(async () => jsonResponse({ candidates: [candidate] }));
+    await expect(client.search(request)).rejects.toMatchObject({ code: "malformed-response" });
+  });
+
+  it("rejects an answer without valid web grounding sources", async () => {
+    const client = groundingClient(async () => jsonResponse({
       candidates: [{ content: { parts: [{ text: "Answer without sources" }] } }]
     }));
-    await expect(client.search(request)).resolves.toMatchObject({
-      answer: "Answer without sources",
-      sources: []
-    });
+    await expect(client.search(request)).rejects.toMatchObject({ code: "no-sources" });
+  });
+
+  it("aborts and reports a timed-out request", async () => {
+    const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    const client = groundingClient(fetcher, 1);
+
+    await expect(client.search(request)).rejects.toMatchObject({ code: "timeout" });
+    expect(fetcher.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
   });
 });

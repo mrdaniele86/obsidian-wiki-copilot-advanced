@@ -9,9 +9,12 @@ export interface WebSearchRequest {
 export type WebSearchErrorCode =
   | "invalid-key"
   | "quota"
+  | "invalid-model"
   | "network"
+  | "timeout"
   | "malformed-response"
   | "no-answer"
+  | "no-sources"
   | "disabled"
   | "unsupported-current-provider"
   | "missing-api-key";
@@ -25,50 +28,58 @@ export class WebSearchError extends Error {
 
 export type GeminiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-interface GeminiWebChunk {
-  web?: { uri?: unknown; title?: unknown };
-}
-
-interface GeminiCandidate {
-  content?: { parts?: Array<{ text?: unknown }> };
-  groundingMetadata?: { groundingChunks?: GeminiWebChunk[] };
-}
-
-interface GeminiResponse {
-  candidates?: GeminiCandidate[];
+interface TimerHost {
+  setTimeout(handler: () => void, timeout?: number): unknown;
+  clearTimeout(id: unknown): void;
 }
 
 const MAX_SOURCES = 12;
 
-function asGeminiResponse(value: unknown): GeminiResponse | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value;
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function answerFrom(candidate: GeminiCandidate | undefined): string {
-  const parts = candidate?.content?.parts;
-  if (!Array.isArray(parts)) return "";
-  return parts
-    .map((part) => typeof part.text === "string" ? part.text : "")
-    .join("")
-    .trim();
+function candidateFrom(value: unknown): JsonRecord {
+  if (!isRecord(value) || !Array.isArray(value.candidates) || !isRecord(value.candidates[0])) {
+    throw new WebSearchError("malformed-response");
+  }
+  return value.candidates[0];
 }
 
-function sourcesFrom(candidate: GeminiCandidate | undefined): WebSource[] {
-  const chunks = candidate?.groundingMetadata?.groundingChunks;
-  if (!Array.isArray(chunks)) return [];
+function answerFrom(candidate: JsonRecord): string {
+  if (!isRecord(candidate.content) || !Array.isArray(candidate.content.parts)) {
+    throw new WebSearchError("malformed-response");
+  }
+  const text = candidate.content.parts.map((part) => {
+    if (!isRecord(part)) throw new WebSearchError("malformed-response");
+    return typeof part.text === "string" ? part.text : "";
+  }).join("").trim();
+  if (!text) throw new WebSearchError("no-answer");
+  return text;
+}
+
+function sourcesFrom(candidate: JsonRecord): WebSource[] {
+  if (candidate.groundingMetadata === undefined) return [];
+  if (!isRecord(candidate.groundingMetadata)) throw new WebSearchError("malformed-response");
+  const chunks = candidate.groundingMetadata.groundingChunks;
+  if (!Array.isArray(chunks)) throw new WebSearchError("malformed-response");
 
   const sources: WebSource[] = [];
   const seen = new Set<string>();
   for (const chunk of chunks) {
-    const uri = chunk.web?.uri;
+    if (!isRecord(chunk)) throw new WebSearchError("malformed-response");
+    if (chunk.web === undefined) continue;
+    if (!isRecord(chunk.web)) throw new WebSearchError("malformed-response");
+    const uri = chunk.web.uri;
     if (typeof uri !== "string" || seen.has(uri)) continue;
     try {
       if (new URL(uri).protocol !== "https:") continue;
     } catch {
       continue;
     }
-    const title = typeof chunk.web?.title === "string" ? chunk.web.title.trim() : "";
+    const title = typeof chunk.web.title === "string" ? chunk.web.title.trim() : "";
     seen.add(uri);
     sources.push({ title: title || uri, url: uri });
     if (sources.length === MAX_SOURCES) break;
@@ -77,12 +88,18 @@ function sourcesFrom(candidate: GeminiCandidate | undefined): WebSource[] {
 }
 
 export class GeminiGroundingClient {
-  constructor(private readonly fetcher: GeminiFetch = window.fetch.bind(window)) {}
+  constructor(
+    private readonly fetcher: GeminiFetch = window.fetch.bind(window),
+    private readonly timeoutMilliseconds = 30_000,
+    private readonly timerHost: TimerHost = window
+  ) {}
 
   async search(request: WebSearchRequest): Promise<WebSearchResult> {
     const apiKey = request.apiKey.trim();
     if (!apiKey) throw new WebSearchError("invalid-key");
 
+    const controller = new AbortController();
+    const timeout = this.timerHost.setTimeout(() => controller.abort(), this.timeoutMilliseconds);
     let response: Response;
     try {
       response = await this.fetcher(
@@ -90,6 +107,7 @@ export class GeminiGroundingClient {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             contents: [{ parts: [{ text: request.question }] }],
             tools: [{ google_search: {} }]
@@ -97,32 +115,32 @@ export class GeminiGroundingClient {
         }
       );
     } catch {
-      throw new WebSearchError("network");
+      throw new WebSearchError(controller.signal.aborted ? "timeout" : "network");
+    } finally {
+      this.timerHost.clearTimeout(timeout);
     }
 
     if (response.status === 401 || response.status === 403) throw new WebSearchError("invalid-key");
     if (response.status === 429) throw new WebSearchError("quota");
+    if (response.status === 400 || response.status === 404) throw new WebSearchError("invalid-model");
     if (!response.ok) throw new WebSearchError("network");
 
-    let payload: GeminiResponse | null;
+    let payload: unknown;
     try {
-      payload = asGeminiResponse(await response.json());
+      payload = await response.json();
     } catch {
       throw new WebSearchError("malformed-response");
     }
-    if (!payload || !Array.isArray(payload.candidates)) {
-      throw new WebSearchError("malformed-response");
-    }
-
-    const candidate = payload.candidates[0];
+    const candidate = candidateFrom(payload);
     const answer = answerFrom(candidate);
-    if (!answer) throw new WebSearchError("no-answer");
+    const sources = sourcesFrom(candidate);
+    if (!sources.length) throw new WebSearchError("no-sources");
 
     return {
       provider: "gemini",
       model: request.model,
       answer,
-      sources: sourcesFrom(candidate)
+      sources
     };
   }
 }

@@ -26,7 +26,7 @@ describe("optional web-search flow", () => {
   });
 
   it("keeps the provider request question-only by default", () => {
-    expect(mainSource).toContain("return service.search({\n      question,\n      model");
+    expect(mainSource).toMatch(/return service\.search\(\{\r?\n\s+question,\r?\n\s+model/u);
     expect(mainSource).toContain("...(history?.length ? { history } : {})");
   });
 

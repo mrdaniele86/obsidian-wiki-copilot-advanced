@@ -8,9 +8,9 @@ Plugins registry.
 
 - `manifest.json` must use `"id": "wiki-copilot-advanced"` and
   `"name": "Wiki Copilot Advanced"`.
-- The beta version is `2.1.1-beta.2`. It must match exactly in `package.json`,
+- The beta version is `2.1.1-beta.3`. It must match exactly in `package.json`,
   `manifest.json`, and the Git tag.
-- `versions.json` must contain `"2.1.1-beta.2": "1.13.0"`.
+- `versions.json` must contain `"2.1.1-beta.3": "1.13.0"`.
 - Keep `minAppVersion` at `1.13.0` and `isDesktopOnly` at `false`.
 
 ## Build and release assets
@@ -20,10 +20,10 @@ Plugins registry.
    and sizes of the release assets.
 2. Confirm the release upload contains exactly the generated `main.js` plus
    `manifest.json` and `styles.css` from the same commit.
-3. Create the Git tag `2.1.1-beta.2` on that commit.
-4. Create the GitHub Release named `2.1.1-beta.2` for tag `2.1.1-beta.2`, and
+3. Create the Git tag `2.1.1-beta.3` on that commit.
+4. Create the GitHub Release named `2.1.1-beta.3` for tag `2.1.1-beta.3`, and
    attach `main.js`, `manifest.json`, and `styles.css`.
-5. In BRAT, add the repository and choose release `2.1.1-beta.2`; verify that
+5. In BRAT, add the repository and choose release `2.1.1-beta.3`; verify that
    a clean vault installs it under `.obsidian/plugins/wiki-copilot-advanced/`.
    Confirm it can be enabled without copying files from another plugin folder.
 

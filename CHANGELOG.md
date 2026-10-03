@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `2.1.1-beta.3`: Add fuzzy conversation search, preserve chat while opening citations, and refine mobile composer/history interactions.
 - `2.1.1-beta.2`: Improve mobile history controls, composer safe-area layout, and fresh-install model settings.
 - Prepare the Wiki Copilot Advanced fork for the `2.1.1-beta.1` BRAT beta release.
 

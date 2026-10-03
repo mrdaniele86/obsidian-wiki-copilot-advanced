@@ -816,6 +816,17 @@ body.is-mobile .wiki-copilot-composer-buttons button {
   border-radius: var(--radius-m);
 }
 
+.wiki-copilot-web-search {
+  min-height: 44px;
+}
+
+.wiki-copilot-web-search-consent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-4);
+}
+
 body.is-mobile .wiki-copilot-sources summary {
   min-height: 44px;
 }

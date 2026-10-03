@@ -11,6 +11,10 @@ const coordinatorSource = readFileSync(new URL("../src/obsidian/index-coordinato
 const retrieverSource = readFileSync(new URL("../src/core/hybrid-retriever.ts", import.meta.url), "utf8");
 
 describe("mobile view interactions", () => {
+  it("keeps web sources as external links rather than vault citations", () => {
+    expect(viewSource).toContain('cls: "wiki-copilot-web-sources"');
+    expect(viewSource).toContain('target: "_blank", rel: "noopener noreferrer"');
+  });
   it("keeps user-facing Chinese literals in the translation dictionaries", () => {
     expect(mainSource.replace(/console\.(warn|error)\([^\n]+/gu, "")).not.toMatch(/[\p{Script=Han}]/u);
     expect(settingsSource).not.toMatch(/[\p{Script=Han}]/u);
@@ -90,6 +94,48 @@ describe("mobile view interactions", () => {
     expect(viewSource).toContain('text: this.plugin.t("composer.shortcut")');
     expect(viewSource).toContain('text: this.plugin.t("composer.send")');
     expect(viewSource).not.toContain('"aria-label": "向 Wiki Copilot 提问"');
+  });
+
+  it("adds an explicit mobile-safe web search action and consent dialog", () => {
+    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+
+    expect(viewSource).toContain('this.requestWebSearchConsent()');
+    expect(viewSource).toContain('cls: "wiki-copilot-web-search"');
+    expect(viewSource).toContain('new Modal(this.app)');
+    expect(viewSource).toContain('"view.webSearch.searchNow"');
+    expect(viewSource).toContain('"view.webSearch.rememberSession"');
+    expect(viewSource).toContain('"view.webSearch.cancel"');
+    expect(styles).toContain('.wiki-copilot-web-search');
+    expect(styles).toContain('min-height: 44px');
+  });
+
+  it("keeps consent decisions separate from web-search execution", () => {
+    const consentMethod = viewSource.match(
+      /private requestWebSearchConsent\(\): Promise<[\s\S]*?\{([\s\S]*?)\n  \}/u
+    )?.[1] ?? "";
+
+    expect(consentMethod).toContain('decide("cancel")');
+    expect(consentMethod).toContain('decide("once")');
+    expect(consentMethod).toContain('decide("session")');
+    expect(consentMethod).not.toContain("this.plugin.searchWeb");
+  });
+
+  it("treats Escape, close, and backdrop dismissal as one cancel decision", () => {
+    const consentMethod = viewSource.match(
+      /private requestWebSearchConsent\(\): Promise<[\s\S]*?\{([\s\S]*?)\n  \}/u
+    )?.[1] ?? "";
+
+    expect(consentMethod).toContain('modal.onClose = () => decide("cancel")');
+    expect(consentMethod).toContain("if (resolved)");
+  });
+
+  it("discloses the configured Gemini model in the web-search consent dialog", () => {
+    const consentMethod = viewSource.match(
+      /private requestWebSearchConsent\(\): Promise<[\s\S]*?\{([\s\S]*?)\n  \}/u
+    )?.[1] ?? "";
+
+    expect(consentMethod).toContain('"view.webSearch.consent.providerModel"');
+    expect(consentMethod).toContain("this.plugin.settings.webSearch.geminiModel");
   });
 
   it("coalesces mobile textarea measurements to one animation frame", () => {

@@ -53,6 +53,35 @@ describe("conversation Markdown", () => {
     expect(parseConversation(legacy)?.turns[1]).toEqual({ role: "assistant", content: "Answer" });
   });
 
+  it("round-trips optional web search state without affecting vault sources", () => {
+    const webConversation: Conversation = {
+      ...conversation,
+      turns: [{
+        role: "assistant",
+        content: "Current answer.",
+        webSearch: {
+          provider: "gemini",
+          model: "gemini-2.5-flash",
+          answer: "Current answer.",
+          sources: [{ title: "Gemini", url: "https://example.com/current" }]
+        }
+      }]
+    };
+
+    expect(parseConversation(serializeConversation(webConversation))).toEqual(webConversation);
+  });
+
+  it("discards malformed web search metadata while preserving its assistant turn", () => {
+    const serialized = serializeConversation({
+      ...conversation,
+      turns: [{ role: "assistant", content: "Answer", webSearch: ({
+        provider: "invalid", model: "gemini-2.5-flash", answer: "Answer", sources: []
+      } as never) }]
+    });
+
+    expect(parseConversation(serialized)?.turns).toEqual([{ role: "assistant", content: "Answer" }]);
+  });
+
   it("does not treat ordinary notes or malformed conversation notes as conversations", () => {
     expect(parseConversation("# ordinary note")).toBeNull();
     expect(parseConversation("---\ntype: \"wiki-copilot-conversation\"\n---\n## User\nHello")).toBeNull();

@@ -1,6 +1,7 @@
 export type ConversationRole = "user" | "assistant";
 
 import type { SourceReference } from "../core/types";
+import type { WebSearchResult } from "../web-search/types";
 
 export interface UserConversationTurn {
   role: "user";
@@ -12,6 +13,7 @@ export interface AssistantConversationTurn {
   content: string;
   sources?: SourceReference[];
   knowledgeBaseHit?: boolean;
+  webSearch?: WebSearchResult;
 }
 
 export type ConversationTurn = UserConversationTurn | AssistantConversationTurn;
@@ -19,10 +21,12 @@ export type ConversationTurn = UserConversationTurn | AssistantConversationTurn;
 export function assistantRenderState(turn: AssistantConversationTurn): {
   sources: SourceReference[];
   knowledgeBaseHit: boolean;
+  webSearch?: WebSearchResult;
 } {
   return {
     sources: turn.sources ?? [],
-    knowledgeBaseHit: turn.knowledgeBaseHit ?? true
+    knowledgeBaseHit: turn.knowledgeBaseHit ?? true,
+    webSearch: turn.webSearch
   };
 }
 

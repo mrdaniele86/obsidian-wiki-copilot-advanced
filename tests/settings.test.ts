@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("obsidian", () => ({
@@ -26,6 +27,46 @@ describe("translation dictionaries", () => {
 });
 
 describe("retrieval mode settings", () => {
+  it("defaults web search to the disabled Gemini configuration", () => {
+    const settings = loadWikiCopilotSettings(undefined);
+
+    expect(settings.webSearch).toEqual({
+      mode: "disabled",
+      geminiModel: "gemini-2.5-flash",
+      includeRecentChatContext: false
+    });
+    expect(DEFAULT_SETTINGS.webSearch).toEqual(settings.webSearch);
+  });
+
+  it("keeps recognized persisted web-search modes and trims a Gemini model", () => {
+    const settings = loadWikiCopilotSettings({ webSearch: {
+      mode: "dedicated-gemini",
+      geminiModel: " gemini-3-flash-preview "
+    } });
+
+    expect(settings.webSearch).toEqual({
+      mode: "dedicated-gemini",
+      geminiModel: "gemini-3-flash-preview",
+      includeRecentChatContext: false
+    });
+  });
+
+  it("normalizes malformed persisted web-search settings safely", () => {
+    expect(loadWikiCopilotSettings({ webSearch: {
+      mode: "untrusted-provider",
+      geminiModel: 42
+    } }).webSearch).toEqual({
+      mode: "disabled",
+      geminiModel: "gemini-2.5-flash",
+      includeRecentChatContext: false
+    });
+    expect(loadWikiCopilotSettings({ webSearch: "enabled" }).webSearch).toEqual({
+      mode: "disabled",
+      geminiModel: "gemini-2.5-flash",
+      includeRecentChatContext: false
+    });
+  });
+
   it("starts a fresh installation with a neutral custom provider", () => {
     const settings = loadWikiCopilotSettings(undefined);
 
@@ -137,6 +178,19 @@ describe("model response mode settings", () => {
 });
 
 describe("settings presentation", () => {
+  it("exposes the localized, capability-aware web search controls", () => {
+    const settingsSource = readFileSync(
+      new URL("../src/settings.ts", import.meta.url),
+      "utf8"
+    );
+
+    expect(settingsSource).toContain('heading: t("settings.webSearch.heading")');
+    expect(settingsSource).toContain('webSearch.mode === "dedicated-gemini"');
+    expect(settingsSource).toContain('key: "webSearchMode"');
+    expect(settingsSource).toContain('key: "webSearchGeminiModel"');
+    expect(settingsSource).toContain('this.plugin.setWebSearchApiKey(value)');
+  });
+
   it("fills a provider suggestion without touching the stored API key", async () => {
     const plugin = {
       settings: loadWikiCopilotSettings(undefined),

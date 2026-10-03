@@ -51,6 +51,10 @@ const settings: WikiCopilotSettings = {
     serviceName: "",
     endpoint: "https://api.deepseek.com",
     model: "deepseek-v4-flash"
+  },
+  webSearch: {
+    mode: "disabled",
+    geminiModel: "gemini-2.5-flash"
   }
 };
 

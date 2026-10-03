@@ -15,10 +15,17 @@ import {
 import type { ModelProvider } from "./model-presets";
 import { isUiLanguage } from "./i18n";
 import type { UiLanguage } from "./i18n";
+import type { WebSearchMode, WebSearchSettings } from "./web-search/types";
 
 export type RetrievalMode = "precise" | "fast";
 
 export const DEFAULT_RETRIEVAL_MODE: RetrievalMode = "precise";
+
+export const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
+  mode: "disabled",
+  geminiModel: "gemini-2.5-flash",
+  includeRecentChatContext: false
+};
 
 export interface ModelSettings {
   provider: ModelProvider;
@@ -37,6 +44,7 @@ export interface WikiCopilotSettings {
   retrieval: RetrievalOptions;
   prioritizeActiveNote: boolean;
   model: ModelSettings;
+  webSearch: WebSearchSettings;
 }
 
 export const DEFAULT_SETTINGS: WikiCopilotSettings = {
@@ -64,11 +72,16 @@ export const DEFAULT_SETTINGS: WikiCopilotSettings = {
     serviceName: "",
     endpoint: "",
     model: ""
-  }
+  },
+  webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS }
 };
 
 export function isRetrievalMode(value: unknown): value is RetrievalMode {
   return value === "precise" || value === "fast";
+}
+
+export function isWebSearchMode(value: unknown): value is WebSearchMode {
+  return value === "disabled" || value === "current-provider" || value === "dedicated-gemini";
 }
 
 function retrievalSettingsForMode(mode: RetrievalMode): {
@@ -100,6 +113,7 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
     : DEFAULT_SETTINGS.conversationFolder;
   const rawProfile: Partial<KnowledgeProfileConfig> = raw.profile && typeof raw.profile === "object" ? raw.profile : {};
   const rawModel: Partial<ModelSettings> = raw.model && typeof raw.model === "object" ? raw.model : {};
+  const rawWebSearch: Partial<WebSearchSettings> = raw.webSearch && typeof raw.webSearch === "object" ? raw.webSearch : {};
   const savedEndpoint = typeof rawModel.endpoint === "string" ? rawModel.endpoint.trim() : "";
   const provider = isModelProvider(rawModel.provider)
     ? rawModel.provider
@@ -112,6 +126,12 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
     ? raw.retrievalMode
     : DEFAULT_RETRIEVAL_MODE;
   const retrievalSettings = retrievalSettingsForMode(retrievalMode);
+  const webSearchMode = isWebSearchMode(rawWebSearch.mode)
+    ? rawWebSearch.mode
+    : DEFAULT_WEB_SEARCH_SETTINGS.mode;
+  const savedGeminiModel = typeof rawWebSearch.geminiModel === "string"
+    ? rawWebSearch.geminiModel.trim()
+    : "";
 
   return {
     language,
@@ -134,6 +154,11 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
       serviceName: savedServiceName,
       endpoint: providerEndpoint(provider, savedEndpoint),
       model: savedModel || defaultModelForProvider(provider)
+    },
+    webSearch: {
+      mode: webSearchMode,
+      geminiModel: savedGeminiModel || DEFAULT_WEB_SEARCH_SETTINGS.geminiModel,
+      includeRecentChatContext: rawWebSearch.includeRecentChatContext === true
     }
   };
 }
@@ -157,7 +182,10 @@ type WikiCopilotSettingKey =
   | "serviceName"
   | "endpoint"
   | "model"
-  | "retrievalMode";
+  | "retrievalMode"
+  | "webSearchMode"
+  | "webSearchGeminiModel"
+  | "webSearchIncludeRecentChatContext";
 
 export class WikiCopilotSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: WikiCopilotPlugin) {
@@ -294,6 +322,67 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
             }
           }
         ]
+      },
+      {
+        type: "group",
+        heading: t("settings.webSearch.heading"),
+        items: [
+          {
+            name: t("settings.webSearch.mode.name"), desc: t("settings.webSearch.mode.desc"),
+            control: {
+              type: "dropdown",
+              key: "webSearchMode",
+              options: {
+                disabled: t("settings.webSearch.mode.disabled"),
+                "current-provider": t("settings.webSearch.mode.currentProvider"),
+                "dedicated-gemini": t("settings.webSearch.mode.dedicatedGemini")
+              }
+            }
+          },
+          {
+            name: t("settings.webSearch.currentProvider.name"),
+            desc: t("settings.webSearch.currentProvider.desc"),
+            visible: () => this.plugin.settings.webSearch.mode === "current-provider",
+            render: (setting) => {
+              setting
+                .setName(t("settings.webSearch.currentProvider.name"))
+                .setDesc(t("settings.webSearch.currentProvider.desc"))
+                .setDisabled(true);
+            }
+          },
+          {
+            name: t("settings.webSearch.geminiModel.name"),
+            desc: t("settings.webSearch.geminiModel.desc"),
+            visible: () => this.plugin.settings.webSearch.mode === "dedicated-gemini",
+            control: { type: "text", key: "webSearchGeminiModel", placeholder: DEFAULT_WEB_SEARCH_SETTINGS.geminiModel }
+          },
+          {
+            name: t("settings.webSearch.apiKey.name"),
+            desc: t("settings.webSearch.apiKey.desc"),
+            visible: () => this.plugin.settings.webSearch.mode === "dedicated-gemini",
+            render: (setting) => {
+              setting
+                .setName(t("settings.webSearch.apiKey.name"))
+                .setDesc(t("settings.webSearch.apiKey.desc"))
+                .addText((text) => {
+                  text.inputEl.type = "password";
+                  text.inputEl.autocomplete = "off";
+                  return text
+                    .setPlaceholder(t("settings.webSearch.apiKey.placeholder"))
+                    .setValue(this.plugin.getWebSearchApiKey() ?? "")
+                    .onChange(async (value) => {
+                      await this.plugin.setWebSearchApiKey(value);
+                    });
+                });
+            }
+          },
+          {
+            name: t("settings.webSearch.includeRecentChatContext.name"),
+            desc: t("settings.webSearch.includeRecentChatContext.desc"),
+            visible: () => this.plugin.settings.webSearch.mode === "dedicated-gemini",
+            control: { type: "toggle", key: "webSearchIncludeRecentChatContext" }
+          }
+        ]
       }
     ];
   }
@@ -312,6 +401,12 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
         return this.plugin.settings.model.model;
       case "retrievalMode":
         return this.plugin.settings.retrievalMode;
+      case "webSearchMode":
+        return this.plugin.settings.webSearch.mode;
+      case "webSearchGeminiModel":
+        return this.plugin.settings.webSearch.geminiModel;
+      case "webSearchIncludeRecentChatContext":
+        return this.plugin.settings.webSearch.includeRecentChatContext;
     }
   }
 
@@ -360,6 +455,21 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
           this.plugin.settings.retrievalRange = retrievalSettings.answerTimeoutRange;
           this.plugin.settings.retrieval = retrievalSettings.options;
         }
+        break;
+      case "webSearchMode":
+        if (!isWebSearchMode(value)) return;
+        this.plugin.settings.webSearch.mode = value;
+        await this.plugin.saveSettings();
+        this.update();
+        return;
+      case "webSearchGeminiModel":
+        if (typeof value === "string" && value.trim()) {
+          this.plugin.settings.webSearch.geminiModel = value.trim();
+        }
+        break;
+      case "webSearchIncludeRecentChatContext":
+        if (typeof value !== "boolean") return;
+        this.plugin.settings.webSearch.includeRecentChatContext = value;
         break;
     }
     await this.plugin.saveSettings();

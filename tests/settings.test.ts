@@ -26,6 +26,42 @@ describe("translation dictionaries", () => {
 });
 
 describe("retrieval mode settings", () => {
+  it("defaults web search to the disabled Gemini configuration", () => {
+    const settings = loadWikiCopilotSettings(undefined);
+
+    expect(settings.webSearch).toEqual({
+      mode: "disabled",
+      geminiModel: "gemini-2.5-flash"
+    });
+    expect(DEFAULT_SETTINGS.webSearch).toEqual(settings.webSearch);
+  });
+
+  it("keeps recognized persisted web-search modes and trims a Gemini model", () => {
+    const settings = loadWikiCopilotSettings({ webSearch: {
+      mode: "dedicated-gemini",
+      geminiModel: " gemini-3-flash-preview "
+    } });
+
+    expect(settings.webSearch).toEqual({
+      mode: "dedicated-gemini",
+      geminiModel: "gemini-3-flash-preview"
+    });
+  });
+
+  it("normalizes malformed persisted web-search settings safely", () => {
+    expect(loadWikiCopilotSettings({ webSearch: {
+      mode: "untrusted-provider",
+      geminiModel: 42
+    } }).webSearch).toEqual({
+      mode: "disabled",
+      geminiModel: "gemini-2.5-flash"
+    });
+    expect(loadWikiCopilotSettings({ webSearch: "enabled" }).webSearch).toEqual({
+      mode: "disabled",
+      geminiModel: "gemini-2.5-flash"
+    });
+  });
+
   it("starts a fresh installation with a neutral custom provider", () => {
     const settings = loadWikiCopilotSettings(undefined);
 

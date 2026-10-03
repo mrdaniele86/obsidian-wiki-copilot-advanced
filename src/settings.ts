@@ -15,10 +15,16 @@ import {
 import type { ModelProvider } from "./model-presets";
 import { isUiLanguage } from "./i18n";
 import type { UiLanguage } from "./i18n";
+import type { WebSearchMode, WebSearchSettings } from "./web-search/types";
 
 export type RetrievalMode = "precise" | "fast";
 
 export const DEFAULT_RETRIEVAL_MODE: RetrievalMode = "precise";
+
+export const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
+  mode: "disabled",
+  geminiModel: "gemini-2.5-flash"
+};
 
 export interface ModelSettings {
   provider: ModelProvider;
@@ -37,6 +43,7 @@ export interface WikiCopilotSettings {
   retrieval: RetrievalOptions;
   prioritizeActiveNote: boolean;
   model: ModelSettings;
+  webSearch: WebSearchSettings;
 }
 
 export const DEFAULT_SETTINGS: WikiCopilotSettings = {
@@ -64,11 +71,16 @@ export const DEFAULT_SETTINGS: WikiCopilotSettings = {
     serviceName: "",
     endpoint: "",
     model: ""
-  }
+  },
+  webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS }
 };
 
 export function isRetrievalMode(value: unknown): value is RetrievalMode {
   return value === "precise" || value === "fast";
+}
+
+export function isWebSearchMode(value: unknown): value is WebSearchMode {
+  return value === "disabled" || value === "current-provider" || value === "dedicated-gemini";
 }
 
 function retrievalSettingsForMode(mode: RetrievalMode): {
@@ -100,6 +112,7 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
     : DEFAULT_SETTINGS.conversationFolder;
   const rawProfile: Partial<KnowledgeProfileConfig> = raw.profile && typeof raw.profile === "object" ? raw.profile : {};
   const rawModel: Partial<ModelSettings> = raw.model && typeof raw.model === "object" ? raw.model : {};
+  const rawWebSearch: Partial<WebSearchSettings> = raw.webSearch && typeof raw.webSearch === "object" ? raw.webSearch : {};
   const savedEndpoint = typeof rawModel.endpoint === "string" ? rawModel.endpoint.trim() : "";
   const provider = isModelProvider(rawModel.provider)
     ? rawModel.provider
@@ -112,6 +125,12 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
     ? raw.retrievalMode
     : DEFAULT_RETRIEVAL_MODE;
   const retrievalSettings = retrievalSettingsForMode(retrievalMode);
+  const webSearchMode = isWebSearchMode(rawWebSearch.mode)
+    ? rawWebSearch.mode
+    : DEFAULT_WEB_SEARCH_SETTINGS.mode;
+  const savedGeminiModel = typeof rawWebSearch.geminiModel === "string"
+    ? rawWebSearch.geminiModel.trim()
+    : "";
 
   return {
     language,
@@ -134,6 +153,10 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
       serviceName: savedServiceName,
       endpoint: providerEndpoint(provider, savedEndpoint),
       model: savedModel || defaultModelForProvider(provider)
+    },
+    webSearch: {
+      mode: webSearchMode,
+      geminiModel: savedGeminiModel || DEFAULT_WEB_SEARCH_SETTINGS.geminiModel
     }
   };
 }

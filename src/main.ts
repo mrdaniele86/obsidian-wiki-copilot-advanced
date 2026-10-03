@@ -328,11 +328,6 @@ export default class WikiCopilotPlugin extends Plugin {
     this.refreshOpenViews();
   }
 
-  requestWebSearchConsent(): boolean {
-    return this.settings.webSearch.mode === "dedicated-gemini" &&
-      this.webSearchConsent.has("gemini", this.settings.webSearch.geminiModel);
-  }
-
   async searchWeb(question: string): Promise<WebSearchResult> {
     const apiKey = this.getWebSearchApiKey() ?? "";
     const service = new WebSearchService({

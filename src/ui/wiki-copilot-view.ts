@@ -288,7 +288,7 @@ export class WikiCopilotView extends ItemView {
       attr: { "aria-label": this.plugin.t("view.webSearch.action") }
     });
     this.webSearchButton.disabled = this.plugin.settings.webSearch.mode === "disabled";
-    this.registerDomEvent(this.webSearchButton, "click", () => this.openWebSearchConsent());
+    this.registerDomEvent(this.webSearchButton, "click", () => void this.openWebSearchConsent());
     this.askButton = buttons.createEl("button", { cls: "mod-cta", text: this.plugin.t("composer.send") });
     this.registerDomEvent(this.askButton, "mousedown", (event) => {
       if (Platform.isMobile) {
@@ -306,7 +306,7 @@ export class WikiCopilotView extends ItemView {
     });
   }
 
-  private openWebSearchConsent(): void {
+  private async openWebSearchConsent(): Promise<void> {
     const question = this.queryEl.value.trim();
     if (!question) {
       new Notice(this.plugin.t("view.emptyQuestion"));
@@ -316,30 +316,37 @@ export class WikiCopilotView extends ItemView {
       new Notice(this.plugin.t("view.webSearch.unavailable"));
       return;
     }
-    if (this.plugin.requestWebSearchConsent()) {
-      void this.plugin.searchWeb(question);
-      return;
-    }
-
-    const modal = new Modal(this.app);
-    modal.setTitle(this.plugin.t("view.webSearch.consent.title"));
-    modal.contentEl.createEl("p", { text: this.plugin.t("view.webSearch.consent.questionOnly") });
-    modal.contentEl.createEl("p", { text: this.plugin.t("view.webSearch.consent.dataHandling") });
-    const actions = modal.contentEl.createDiv({ cls: "wiki-copilot-web-search-consent-actions" });
-    const searchNow = actions.createEl("button", { cls: "mod-cta", text: this.plugin.t("view.webSearch.searchNow") });
-    this.registerDomEvent(searchNow, "click", () => {
-      modal.close();
-      void this.plugin.searchWeb(question);
-    });
-    const remember = actions.createEl("button", { text: this.plugin.t("view.webSearch.rememberSession") });
-    this.registerDomEvent(remember, "click", () => {
+    const decision = this.plugin.webSearchConsent.has("gemini", this.plugin.settings.webSearch.geminiModel)
+      ? "session"
+      : await this.requestWebSearchConsent();
+    if (decision === "session") {
       this.plugin.webSearchConsent.remember("gemini", this.plugin.settings.webSearch.geminiModel);
-      modal.close();
-      void this.plugin.searchWeb(question);
+    }
+  }
+
+  private requestWebSearchConsent(): Promise<"cancel" | "once" | "session"> {
+    return new Promise((resolve) => {
+      const modal = new Modal(this.app);
+      let resolved = false;
+      const decide = (decision: "cancel" | "once" | "session"): void => {
+        if (!resolved) {
+          resolved = true;
+          resolve(decision);
+        }
+        modal.close();
+      };
+      modal.setTitle(this.plugin.t("view.webSearch.consent.title"));
+      modal.contentEl.createEl("p", { text: this.plugin.t("view.webSearch.consent.questionOnly") });
+      modal.contentEl.createEl("p", { text: this.plugin.t("view.webSearch.consent.dataHandling") });
+      const actions = modal.contentEl.createDiv({ cls: "wiki-copilot-web-search-consent-actions" });
+      const searchNow = actions.createEl("button", { cls: "mod-cta", text: this.plugin.t("view.webSearch.searchNow") });
+      this.registerDomEvent(searchNow, "click", () => decide("once"));
+      const remember = actions.createEl("button", { text: this.plugin.t("view.webSearch.rememberSession") });
+      this.registerDomEvent(remember, "click", () => decide("session"));
+      const cancel = actions.createEl("button", { text: this.plugin.t("view.webSearch.cancel") });
+      this.registerDomEvent(cancel, "click", () => decide("cancel"));
+      modal.open();
     });
-    const cancel = actions.createEl("button", { text: this.plugin.t("view.webSearch.cancel") });
-    this.registerDomEvent(cancel, "click", () => modal.close());
-    modal.open();
   }
 
   private renderWelcome(): void {

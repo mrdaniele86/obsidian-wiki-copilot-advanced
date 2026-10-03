@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Default `disabled` mode changes no existing retrieval, chat, citation, or model behavior.
-- Send only the explicit question to the web provider; never Vault text, active-note text, history, or existing model credentials.
+- Send only the explicit question by default; an opt-in bounded recent-chat context may be sent only when enabled and disclosed in the consent. Never send Vault text, active-note text, the full history, or existing model credentials.
 - Require consent before each search unless remembered in memory for this Obsidian session only.
 - Gemini is the first and only supported web adapter; do not advertise generic OpenAI-compatible support.
 - Keep web URLs and sources distinct from Vault `S1` citations and localize all UI text in IT/EN/ZH.
@@ -217,7 +217,7 @@ Expected: FAIL because controls and consent do not exist.
 
 - [ ] **Step 3: Implement localized controls**
 
-Add mode/model/key settings. Disable and explain `current-provider` until a verified adapter exists. Add a separate 44px “Search the web” action that is unavailable in disabled mode. Present an Obsidian `Modal` saying that only the typed question goes to Gemini, include known provider data handling, and offer **Search now**, **Remember for this session**, and **Cancel**. Cancel keeps composer text and creates no assistant turn.
+Add mode/model/key settings and an **Include recent chat context** checkbox, disabled by default. Disable and explain `current-provider` until a verified adapter exists. Add a separate 44px “Search the web” action that is unavailable in disabled mode. Present an Obsidian `Modal` saying whether only the typed question or also bounded recent chat context goes to Gemini, include known provider data handling, and offer **Search now**, **Remember for this session**, and **Cancel**. Cancel keeps composer text and creates no assistant turn.
 
 - [ ] **Step 4: Run GREEN test**
 
@@ -288,11 +288,18 @@ it("does not call web search in disabled mode", async () => {
   expect(harness.webSearch.search).not.toHaveBeenCalled();
   expect(harness.retriever.retrieve).toHaveBeenCalledOnce();
 });
-it("sends only the explicit question after consent", async () => {
+it("sends only the explicit question after consent by default", async () => {
   await harness.view.searchWeb("temperatura Misti", "once");
   expect(harness.webSearch.search).toHaveBeenCalledWith(expect.objectContaining({ question: "temperatura Misti" }));
   expect(harness.webSearch.search.mock.calls[0][0]).not.toHaveProperty("history");
   expect(harness.webSearch.search.mock.calls[0][0]).not.toHaveProperty("chunks");
+});
+it("sends a bounded recent-chat context only when explicitly enabled", async () => {
+  await harness.view.searchWeb("a quale temperatura?", "once");
+  expect(harness.webSearch.search).toHaveBeenCalledWith(expect.objectContaining({
+    question: "a quale temperatura?", history: expect.any(Array)
+  }));
+  expect(harness.webSearch.search.mock.calls[0][0].history.length).toBeLessThanOrEqual(6);
 });
 ```
 
@@ -304,7 +311,7 @@ Expected: FAIL because the separate web flow is absent.
 
 - [ ] **Step 3: Implement narrow orchestration**
 
-Keep `ask()` unchanged as the Vault-only route. Add a distinct consent-gated `searchWeb()` action that does not call `retrieve()`, `buildAnswerContext()`, or `buildSystemPrompt()`. Render/persist a web assistant turn only after a successful result. Localize typed provider errors and offer retry without exposing API bodies or secrets.
+Keep `ask()` unchanged as the Vault-only route. Add a distinct consent-gated `searchWeb()` action that does not call `retrieve()` or `buildAnswerContext()`. By default it sends only the new question; when the new setting is enabled, build a bounded recent-chat context using the same turn/character limiting policy as model history and disclose it in the modal. Render/persist a web assistant turn only after a successful result. Localize typed provider errors and offer retry without exposing API bodies or secrets.
 
 - [ ] **Step 4: Run GREEN test and full verification**
 

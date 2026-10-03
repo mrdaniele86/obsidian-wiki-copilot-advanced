@@ -45,7 +45,9 @@ Prima di ogni ricerca online il plugin mostra una conferma localizzata che indic
 
 Il consenso offre **Cerca ora**, **Annulla** e **Ricorda per questa sessione**. Non viene ricordato oltre la sessione di Obsidian. La scelta “Annulla” lascia la domanda nel composer e non invia alcuna richiesta esterna.
 
-Per impostazione predefinita la ricerca online invia soltanto la domanda esplicita dell'utente e istruzioni minime del plugin. Non invia passaggi del Vault, cronologia chat o note attive. Un eventuale invio combinato di contesto locale dovrà essere una funzione futura distinta, con consenso dedicato.
+Per impostazione predefinita la ricerca online invia soltanto la domanda esplicita dell'utente e istruzioni minime del plugin. Non invia passaggi del Vault o note attive.
+
+Una nuova opzione, **Includi contesto recente della chat**, è disattivata per impostazione predefinita. Quando è attiva, il plugin prepara un contesto limitato ai turni più recenti e pertinenti della conversazione, con limiti rigidi di turni e caratteri. Il consenso indica esplicitamente che anche questo breve contesto sarà inviato al provider e permette di annullare prima di ogni richiesta. Non viene mai inviata l'intera cronologia né contenuto del Vault non già scritto dall'utente o dal modello nella conversazione.
 
 ## Flusso della domanda
 
@@ -100,4 +102,4 @@ Le quote e i prezzi restano sotto il controllo dell'account Google dell'utente e
 - L'utente sceglie fra provider/modello corrente compatibile e provider dedicato.
 - Gemini con Google Search grounding è il primo adapter previsto.
 - Ogni ricerca richiede consenso, ricordabile soltanto per la sessione.
-- Domanda e fonti web sono separate da dati e fonti del Vault.
+- Domanda e fonti web sono separate da dati e fonti del Vault; il contesto chat recente è opzionale, limitato e dichiarato nel consenso.

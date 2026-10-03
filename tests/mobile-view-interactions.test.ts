@@ -32,6 +32,18 @@ describe("mobile view interactions", () => {
     expect(mainSource).toContain(
       "candidate.view.getViewType() !== WIKI_COPILOT_VIEW_TYPE"
     );
+    expect(mainSource).toContain("openCitation(file: TFile, subpath?: string, originLeaf?: WorkspaceLeaf)");
+    expect(viewSource).toContain("this.plugin.openCitation(file, subpath, this.leaf)");
+  });
+
+  it("renders a citation-preview-only return control with a mobile touch target", () => {
+    expect(mainSource).toContain('this.t("view.returnToChat")');
+    expect(mainSource).toContain('this.t("view.returnToChatUnavailable")');
+    expect(mainSource).toContain("this.app.workspace.revealLeaf(originLeaf)");
+    expect(mainSource).toContain("originLeaf.view instanceof WikiCopilotView");
+    expect(mainSource).toContain("addAction");
+    expect(mainSource).toContain('action.addClass("wiki-copilot-citation-return")');
+    expect(mainSource).not.toContain("returnToCitationOrigin() {\n    return this.activateView()");
   });
   it("passes typed retrieval progress semantics to the plugin translation boundary", () => {
     expect(coordinatorSource).not.toMatch(/onProgress\?\.\("[\p{Script=Han}]/u);

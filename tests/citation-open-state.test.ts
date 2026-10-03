@@ -17,4 +17,12 @@ describe("citation document open state", () => {
       eState: undefined
     });
   });
+
+  it("keeps citation opening state independent from the return-to-chat action", () => {
+    expect(citationOpenState("#Section")).toEqual({
+      active: true,
+      state: { mode: "preview" },
+      eState: { subpath: "#Section" }
+    });
+  });
 });

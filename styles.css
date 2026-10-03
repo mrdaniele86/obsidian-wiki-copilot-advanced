@@ -3,6 +3,11 @@
   overflow: hidden;
 }
 
+.wiki-copilot-citation-return {
+  min-width: 44px;
+  min-height: 44px;
+}
+
 .wiki-copilot-view {
   container-name: wiki-copilot;
   container-type: inline-size;

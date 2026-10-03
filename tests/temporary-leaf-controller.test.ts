@@ -81,4 +81,15 @@ describe("reusable citation leaf", () => {
 
     expect(preview.detach).not.toHaveBeenCalled();
   });
+
+  it("retains the most recent citation origin only while its preview is attached", () => {
+    const controller = new ReusableLeafController<ReturnType<typeof leaf>>();
+    const preview = leaf();
+    const chat = leaf();
+
+    controller.acquire(() => preview, () => true, chat);
+
+    expect(controller.originFor(preview, (candidate) => candidate === chat)).toBe(chat);
+    expect(controller.originFor(preview, () => false)).toBeNull();
+  });
 });

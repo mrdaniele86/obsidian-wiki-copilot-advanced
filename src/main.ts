@@ -1,4 +1,4 @@
-import { normalizePath, Notice, Platform, Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import { MarkdownView, normalizePath, Notice, Platform, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import { AnswerTimeoutError, answerTimeoutDetails } from "./core/answer-error";
 import { validateAnswerCitations } from "./core/citations";
 import { buildAnswerContext } from "./core/context-builder";
@@ -84,6 +84,7 @@ export default class WikiCopilotPlugin extends Plugin {
   private manualRebuildPromise: Promise<void> | null = null;
   private readonly citationPreview = new ReusableLeafController<WorkspaceLeaf>();
   private citationOpenQueue: Promise<void> = Promise.resolve();
+  private citationReturnAction: HTMLElement | null = null;
 
   t(key: TranslationKey, variables?: TranslationVariables): string {
     return createTranslator(resolveUiLanguage(this.settings.language, window.navigator.language))(key, variables);
@@ -221,8 +222,8 @@ export default class WikiCopilotPlugin extends Plugin {
     this.indexCoordinator.destroy();
   }
 
-  openCitation(file: TFile, subpath?: string): Promise<void> {
-    const operation = this.citationOpenQueue.then(() => this.openCitationNow(file, subpath));
+  openCitation(file: TFile, subpath?: string, originLeaf?: WorkspaceLeaf): Promise<void> {
+    const operation = this.citationOpenQueue.then(() => this.openCitationNow(file, subpath, originLeaf));
     this.citationOpenQueue = operation.catch(() => undefined);
     return operation;
   }
@@ -232,14 +233,20 @@ export default class WikiCopilotPlugin extends Plugin {
     this.refreshOpenViews();
   }
 
-  private async openCitationNow(file: TFile, subpath?: string): Promise<void> {
+  private async openCitationNow(
+    file: TFile,
+    subpath?: string,
+    originLeaf?: WorkspaceLeaf
+  ): Promise<void> {
     const { leaf, created } = this.citationPreview.acquire(
       () => this.app.workspace.getLeaf("tab"),
-      (candidate) => this.isReusableCitationPreviewLeaf(candidate)
+      (candidate) => this.isReusableCitationPreviewLeaf(candidate),
+      originLeaf
     );
 
     try {
       await leaf.openFile(file, citationOpenState(subpath));
+      this.installCitationReturnAction(leaf);
     } catch (error) {
       if (created) {
         this.citationPreview.discard(leaf);
@@ -261,6 +268,34 @@ export default class WikiCopilotPlugin extends Plugin {
   private isReusableCitationPreviewLeaf(candidate: WorkspaceLeaf): boolean {
     return this.isAttachedLeaf(candidate)
       && candidate.view.getViewType() !== WIKI_COPILOT_VIEW_TYPE;
+  }
+
+  private installCitationReturnAction(previewLeaf: WorkspaceLeaf): void {
+    this.citationReturnAction?.remove();
+    this.citationReturnAction = null;
+    if (!(previewLeaf.view instanceof MarkdownView)) {
+      return;
+    }
+
+    const action = previewLeaf.view.addAction(
+      "message-circle",
+      this.t("view.returnToChat"),
+      () => this.returnToCitationOrigin(previewLeaf)
+    );
+    action.addClass("wiki-copilot-citation-return");
+    this.citationReturnAction = action;
+  }
+
+  private returnToCitationOrigin(previewLeaf: WorkspaceLeaf): void {
+    const originLeaf = this.citationPreview.originFor(
+      previewLeaf,
+      (candidate) => this.isAttachedLeaf(candidate)
+    );
+    if (!originLeaf || !(originLeaf.view instanceof WikiCopilotView)) {
+      new Notice(this.t("view.returnToChatUnavailable"));
+      return;
+    }
+    void this.app.workspace.revealLeaf(originLeaf);
   }
 
   isModelConfigured(): boolean {

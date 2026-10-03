@@ -963,7 +963,7 @@ export class WikiCopilotView extends ItemView {
     }
 
     try {
-      await this.plugin.openCitation(file, subpath);
+      await this.plugin.openCitation(file, subpath, this.leaf);
     } catch (error) {
       console.error("Wiki Copilot failed to open citation", error);
       new Notice(this.plugin.t("view.sourceOpenFailed"));

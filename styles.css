@@ -680,7 +680,7 @@ body.is-mobile.is-phone .wiki-copilot-composer {
   );
 }
 
-body.is-mobile.is-phone .wiki-copilot-composer:focus-within {
+body.is-mobile.is-phone .wiki-copilot-composer:has(textarea.wiki-copilot-input:focus) {
   padding-bottom: max(8px, env(safe-area-inset-bottom));
 }
 

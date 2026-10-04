@@ -47,10 +47,11 @@ describe("mobile interaction styles", () => {
     expect(styles).not.toMatch(/wiki-copilot-composer[^}]*transform:/su);
   });
 
-  it("drops floating-navbar clearance while the phone composer contains focus", () => {
+  it("drops floating-navbar clearance only while the phone textarea has focus", () => {
     expect(styles).toMatch(
-      /body\.is-mobile\.is-phone \.wiki-copilot-composer:focus-within\s*\{[^}]*padding-bottom:\s*max\(\s*8px,\s*env\(safe-area-inset-bottom\)\s*\);/su
+      /body\.is-mobile\.is-phone \.wiki-copilot-composer:has\(textarea\.wiki-copilot-input:focus\)\s*\{[^}]*padding-bottom:\s*max\(\s*8px,\s*env\(safe-area-inset-bottom\)\s*\);/su
     );
+    expect(styles).not.toContain(".wiki-copilot-composer:focus-within");
   });
 
   it("honors the native hidden attribute on the web-search action", () => {

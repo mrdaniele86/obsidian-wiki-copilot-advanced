@@ -169,7 +169,7 @@ describe("pending clarification in the chat view", () => {
     expect(turns[1]?.pendingClarification).toBeUndefined();
   });
 
-  it("keeps a pending clarification untouched while a Web request is running", async () => {
+  it("clears a pending clarification after a successful Web response is saved", async () => {
     const view = viewFor(vi.fn());
     const turns = [
       { role: "user" as const, content: "What next after Tempo?" },
@@ -177,13 +177,24 @@ describe("pending clarification in the chat view", () => {
     ];
     view.turns = turns.map((turn) => ({ ...turn }));
     view.conversation = { id: "saved", createdAt: "now", updatedAt: "now", title: "Tempo", turns };
-    (view.plugin as Record<string, unknown>).searchWeb = vi.fn().mockResolvedValue({
+    let finishSearch: ((result: unknown) => void) | undefined;
+    (view.plugin as Record<string, unknown>).searchWeb = vi.fn().mockImplementation(() => new Promise((resolve) => {
+      finishSearch = resolve;
+    }));
+
+    const pendingSearch = (view.runWebSearch as (question: string) => Promise<void>)("Web question");
+    await vi.waitFor(() => expect(finishSearch).toBeTypeOf("function"));
+
+    expect((view.turns[1] as { pendingClarification?: unknown })?.pendingClarification).toEqual(tempoPending);
+    expect(turns[1]?.pendingClarification).toEqual(tempoPending);
+
+    finishSearch?.({
       provider: "gemini", model: "test", question: "Web question", answer: "Web answer", sources: [{ title: "Source", url: "https://example.com" }]
     });
+    await pendingSearch;
 
-    await (view.runWebSearch as (question: string) => Promise<void>)("Web question");
-
-    expect(turns[1]?.pendingClarification).toEqual(tempoPending);
+    expect((view.turns[1] as { pendingClarification?: unknown })?.pendingClarification).toBeUndefined();
+    expect(turns[1]?.pendingClarification).toBeUndefined();
   });
 
   it("forwards clarification to the non-stream fallback and clears it after success", async () => {

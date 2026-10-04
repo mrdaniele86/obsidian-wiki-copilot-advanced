@@ -734,6 +734,7 @@ export class WikiCopilotView extends ItemView {
       this.conversation.turns.push({ role: "user", content: question }, {
         role: "assistant", content: result.answer, sources: [], knowledgeBaseHit: false, webSearch: result
       });
+      this.clearPendingClarificationsBefore(this.turns.length);
       this.conversation.updatedAt = now;
       await this.saveConversation();
     } catch (error) {

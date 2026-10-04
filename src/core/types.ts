@@ -1,3 +1,5 @@
+import type { PendingClarification } from "../chat/pending-clarification";
+
 export type KnowledgeRole =
   | "schema"
   | "index"
@@ -104,6 +106,7 @@ export interface AnswerResult {
   markdown: string;
   sources: SourceReference[];
   knowledgeBaseHit: boolean;
+  pendingClarification?: PendingClarification;
 }
 
 export interface AnswerRetrievalMetrics {

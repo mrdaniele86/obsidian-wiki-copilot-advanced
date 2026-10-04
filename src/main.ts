@@ -60,6 +60,11 @@ import type { RetrievalProgressStage } from "./core/retrieval-progress";
 import { WebSearchService } from "./web-search/web-search-service";
 import type { WebSearchHistoryTurn, WebSearchResult } from "./web-search/types";
 import { SessionWebSearchConsent } from "./web-search/session-consent";
+import {
+  formatClarificationContinuation,
+  type ClarificationDirective,
+  type ResolvedClarification
+} from "./chat/pending-clarification";
 
 const RETRIEVAL_PLANNER_TIMEOUT_MS = 15_000;
 export const WEB_SEARCH_API_KEY_ID = "wiki-copilot-advanced-web-search-api-key";
@@ -77,6 +82,7 @@ export interface AnswerOptions {
   onResponseMode?: (mode: ActiveCompletionMode, detail?: ModelResponseDetail) => void;
   onModelActivity?: (activity: CompletionActivity) => void;
   onModelWarning?: (warning: ModelCompletionWarning) => void;
+  clarification?: ResolvedClarification;
 }
 
 export default class WikiCopilotPlugin extends Plugin {
@@ -482,8 +488,11 @@ export default class WikiCopilotPlugin extends Plugin {
     if (options.signal?.aborted) {
       throw new RequestCancelledError();
     }
+    const effectiveQuestion = options.clarification
+      ? formatClarificationContinuation(options.clarification)
+      : question;
     const retrieval = await this.retrieve(
-      question,
+      effectiveQuestion,
       history,
       options.onProgress,
       options.signal
@@ -519,10 +528,11 @@ export default class WikiCopilotPlugin extends Plugin {
     const retrievalMode = this.settings.retrievalMode;
     const timeoutMilliseconds = modelTimeoutMsForRange(retrievalRange);
     let rawMarkdown: string;
+    let clarificationDirective: ClarificationDirective | undefined;
     const modelWarnings: string[] = [];
     try {
       rawMarkdown = await this.llmClient.answer(
-        question,
+        effectiveQuestion,
         context,
         history,
         this.indexCoordinator.queryGuidance,
@@ -536,6 +546,9 @@ export default class WikiCopilotPlugin extends Plugin {
           onWarning: (warning) => {
             modelWarnings.push(this.localizeModelWarning(warning));
             options.onModelWarning?.(warning);
+          },
+          onClarification: (clarification) => {
+            clarificationDirective = clarification;
           },
           onResponseMode: (mode, detail) => {
             options.onResponseMode?.(mode, detail);
@@ -575,7 +588,19 @@ export default class WikiCopilotPlugin extends Plugin {
       invalidIds: (ids) => this.t("view.citationWarningInvalidIds", { ids }),
       missingValidCitation: this.t("view.citationWarningMissing")
     });
-    return { markdown: citationCheck.markdown, sources: context.sources, knowledgeBaseHit };
+    return {
+      markdown: citationCheck.markdown,
+      sources: context.sources,
+      knowledgeBaseHit,
+      ...(clarificationDirective ? {
+        pendingClarification: {
+          ...clarificationDirective,
+          originUserTurnIndex: history.length,
+          originAssistantTurnIndex: history.length + 1,
+          userRepliesSinceRequest: 0
+        }
+      } : {})
+    };
   }
 
   async activateView(): Promise<void> {

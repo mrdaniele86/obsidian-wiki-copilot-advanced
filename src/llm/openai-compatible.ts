@@ -2,6 +2,10 @@ import { requestUrl } from "obsidian";
 import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
 import type { BuiltContext } from "../core/context-builder";
 import type { ChatTurn } from "../core/types";
+import {
+  extractClarificationDirective,
+  type ClarificationDirective
+} from "../chat/pending-clarification";
 import { providerRequiresApiKey } from "../model-presets";
 import type { ModelSettings } from "../settings";
 import {
@@ -42,6 +46,7 @@ export interface CompletionAnswerOptions {
   onResponseMode?: (mode: ActiveCompletionMode, detail?: ModelResponseDetail) => void;
   onActivity?: (activity: CompletionActivity) => void;
   onWarning?: (warning: ModelCompletionWarning) => void;
+  onClarification?: (clarification: ClarificationDirective) => void;
 }
 
 export interface RetrievalPlanningOptions {
@@ -117,6 +122,7 @@ const ANSWER_HISTORY_MAX_TURNS = 10;
 const ANSWER_HISTORY_MAX_CHARACTERS = 24_000;
 const PLANNER_HISTORY_MAX_TURNS = 4;
 const PLANNER_HISTORY_MAX_CHARACTERS = 8_000;
+const CLARIFICATION_DIRECTIVE_INSTRUCTION = `When essential information is missing, ask one clear question and append exactly one final hidden HTML comment in this exact shape: <!-- wiki-copilot-clarification {"goal":"...","question":"...","missing":"...","requiresSummary":true} -->. Use it only when a clarification is required; otherwise append no such comment.`;
 
 function retrievalPlannerPrompt(mode: RetrievalPlanningMode): string {
   const queryCount = mode === "fast" ? "3 to 6" : "4 to 10";
@@ -287,28 +293,36 @@ export class OpenAICompatibleClient {
     const responseMode = options.responseMode ?? "auto";
     if (responseMode === "non-stream") {
       options.onResponseMode?.("non-stream");
-      return this.answerNonStreaming(request, timeoutMilliseconds, options.signal, options.onActivity);
+      return this.completeAnswer(await this.answerNonStreaming(request, timeoutMilliseconds, options.signal, options.onActivity), options);
     }
 
     const fetcher = this.streamingFetch();
     if (!fetcher) {
       if (responseMode === "auto") {
         options.onResponseMode?.("non-stream", "streaming-unavailable");
-        return this.answerNonStreaming(request, timeoutMilliseconds, options.signal, options.onActivity);
+        return this.completeAnswer(await this.answerNonStreaming(request, timeoutMilliseconds, options.signal, options.onActivity), options);
       }
       throw new StreamFallbackRequiredError("streaming-unavailable");
     }
 
     options.onResponseMode?.("stream");
     try {
-      return await this.answerStreaming(request, fetcher, timeoutMilliseconds, options);
+      return this.completeAnswer(await this.answerStreaming(request, fetcher, timeoutMilliseconds, options), options);
     } catch (error) {
       if (error instanceof SafeNonStreamingFallbackError && responseMode === "auto") {
         options.onResponseMode?.("non-stream", error.reason);
-        return this.answerNonStreaming(request, timeoutMilliseconds, options.signal, options.onActivity);
+        return this.completeAnswer(await this.answerNonStreaming(request, timeoutMilliseconds, options.signal, options.onActivity), options);
       }
       throw error;
     }
+  }
+
+  private completeAnswer(markdown: string, options: CompletionAnswerOptions): string {
+    const parsed = extractClarificationDirective(markdown);
+    if (parsed.clarification) {
+      options.onClarification?.(parsed.clarification);
+    }
+    return parsed.markdown;
   }
 
   async planRetrievalQueries(
@@ -343,7 +357,10 @@ export class OpenAICompatibleClient {
     const headers = this.requestHeaders(settings);
 
     const messages = [
-      { role: "system", content: buildSystemPrompt(schemaGuidance, builtContext.sources.length > 0) },
+      {
+        role: "system",
+        content: `${buildSystemPrompt(schemaGuidance, builtContext.sources.length > 0)}\n\n${CLARIFICATION_DIRECTIVE_INSTRUCTION}`
+      },
       ...historyForModel(
         history,
         ANSWER_HISTORY_MAX_TURNS,

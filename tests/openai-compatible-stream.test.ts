@@ -199,6 +199,43 @@ describe("OpenAICompatibleClient streaming", () => {
     expect(requester).not.toHaveBeenCalled();
   });
 
+  it("strips a validated final clarification directive from a non-streaming answer", async () => {
+    const directive = "<!-- wiki-copilot-clarification {\"goal\":\"recommend the next workout after Tempo\",\"question\":\"Which workout came before Tempo?\",\"missing\":\"the prior workout\",\"requiresSummary\":true} -->";
+    const requester = vi.fn(async () => nonStreamingResponse(`Which workout came before Tempo?\n\n${directive}`));
+    const clarifications: unknown[] = [];
+    const client = new OpenAICompatibleClient(() => null, {
+      fetcher: null,
+      requester,
+      timerHost: timerHost()
+    });
+
+    await expect(client.answer("What next after Tempo?", context, [], "", settings(), 90_000, {
+      responseMode: "non-stream",
+      onClarification: (clarification) => clarifications.push(clarification)
+    })).resolves.toBe("Which workout came before Tempo?");
+
+    expect(clarifications).toEqual([expect.objectContaining({ question: "Which workout came before Tempo?" })]);
+  });
+
+  it("strips a final clarification directive assembled across streaming deltas without a second call", async () => {
+    const directive = "<!-- wiki-copilot-clarification {\"goal\":\"recommend the next workout after Tempo\",\"question\":\"Which workout came before Tempo?\",\"missing\":\"the prior workout\",\"requiresSummary\":true} -->";
+    const fetcher = vi.fn(async () => new Response(responseStream([
+      "data: {\"choices\":[{\"delta\":{\"content\":\"Which workout came before Tempo?\\n\\n\"}}]}\n\n",
+      `data: {"choices":[{"delta":{"content":${JSON.stringify(directive)}}}]}\n\n`,
+      "data: [DONE]\n\n"
+    ]), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+    const requester = vi.fn(async () => nonStreamingResponse());
+    const clarifications: unknown[] = [];
+    const client = new OpenAICompatibleClient(() => null, { fetcher, requester, timerHost: timerHost() });
+
+    await expect(client.answer("What next after Tempo?", context, [], "", settings(), 90_000, {
+      onClarification: (clarification) => clarifications.push(clarification)
+    })).resolves.toBe("Which workout came before Tempo?");
+
+    expect(clarifications).toEqual([expect.objectContaining({ goal: "recommend the next workout after Tempo" })]);
+    expect(requester).not.toHaveBeenCalled();
+  });
+
   it("keeps conversation context while the current technical family remains authoritative", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
       responseStream([

@@ -45,6 +45,31 @@ describe("pending clarification", () => {
     expect(extractClarificationDirective(directiveFor(` ${"g".repeat(2_001)} `)).clarification).toBeUndefined();
   });
 
+  it("uses Unicode code points for directive field limits", () => {
+    const directiveFor = (goal: string) => `<!-- wiki-copilot-clarification ${JSON.stringify({
+      goal,
+      question: "Question",
+      missing: "Missing",
+      requiresSummary: false
+    })} -->`;
+
+    expect(extractClarificationDirective(directiveFor("😀".repeat(1_000))).clarification?.goal).toBe("😀".repeat(1_000));
+    expect(extractClarificationDirective(directiveFor("😀".repeat(1_001))).clarification?.goal).toBe("😀".repeat(1_001));
+    expect(extractClarificationDirective(directiveFor("😀".repeat(2_001))).clarification).toBeUndefined();
+  });
+
+  it("rejects unknown directive properties even when their raw payload is bounded", () => {
+    const parsed = extractClarificationDirective(`<!-- wiki-copilot-clarification ${JSON.stringify({
+      goal: "Goal",
+      question: "Question",
+      missing: "Missing",
+      requiresSummary: false,
+      ignored: "x".repeat(6_000)
+    })} -->`);
+
+    expect(parsed).toEqual({ markdown: "" });
+  });
+
   it.each([
     ["duplicate directives", `${directive}\n${directive}`],
     ["invalid JSON", "Answer\n\n<!-- wiki-copilot-clarification {oops} -->"],
@@ -70,7 +95,7 @@ describe("pending clarification", () => {
     );
   });
 
-  it.each(["What did I do last week?", "  Is that enough?  ", "   "])
+  it.each(["What did I do last week?", "What did I do last week？", "¿Qué hice la semana pasada", "ماذا فعلت الأسبوع الماضي؟", "  Is that enough?  ", "   "])
   ("does not resolve an explicit replacement or empty reply: %j", (reply) => {
     expect(resolvePendingClarification(pendingTempo, reply)).toBeNull();
   });

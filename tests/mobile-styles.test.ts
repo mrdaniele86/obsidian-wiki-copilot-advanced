@@ -47,6 +47,18 @@ describe("mobile interaction styles", () => {
     expect(styles).not.toMatch(/wiki-copilot-composer[^}]*transform:/su);
   });
 
+  it("drops floating-navbar clearance while the phone composer contains focus", () => {
+    expect(styles).toMatch(
+      /body\.is-mobile\.is-phone \.wiki-copilot-composer:focus-within\s*\{[^}]*padding-bottom:\s*max\(\s*8px,\s*env\(safe-area-inset-bottom\)\s*\);/su
+    );
+  });
+
+  it("honors the native hidden attribute on the web-search action", () => {
+    expect(styles).toMatch(
+      /\.wiki-copilot-web-search\[hidden\]\s*\{\s*display:\s*none !important;\s*\}/su
+    );
+  });
+
   it("keeps each mobile history entry as one compact row with an internal delete target", () => {
     expect(styles).toMatch(
       /body\.is-mobile \.wiki-copilot-history-entry\s*\{[^}]*min-width:\s*0;[^}]*gap:\s*4px;[^}]*border:\s*1px solid var\(--background-modifier-border\);/su

@@ -680,6 +680,10 @@ body.is-mobile.is-phone .wiki-copilot-composer {
   );
 }
 
+body.is-mobile.is-phone .wiki-copilot-composer:focus-within {
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
+
 .wiki-copilot-history-entry {
   display: flex;
   align-items: center;
@@ -826,6 +830,10 @@ body.is-mobile .wiki-copilot-composer-buttons button {
   gap: 5px;
   padding-inline: 8px;
   white-space: nowrap;
+}
+
+.wiki-copilot-web-search[hidden] {
+  display: none !important;
 }
 
 .wiki-copilot-web-search-consent-actions {

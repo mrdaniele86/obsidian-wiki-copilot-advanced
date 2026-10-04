@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { webSearchButtonState } from "../src/ui/wiki-copilot-view";
 
 const viewSource = readFileSync(
   new URL("../src/ui/wiki-copilot-view.ts", import.meta.url),
@@ -117,12 +118,18 @@ describe("mobile view interactions", () => {
     expect(viewSource).toContain('this.webSearchLabel.setText(this.plugin.t("view.webSearch.compactAction"))');
     expect(viewSource).toContain('this.webSearchButton.setAttribute("aria-label", this.plugin.t("view.webSearch.action"))');
     expect(viewSource).toContain("private syncWebSearchButtonState(): void");
-    expect(viewSource).toContain('const available = this.plugin.settings.webSearch.mode === "dedicated-gemini"');
-    expect(viewSource).toContain("this.webSearchButton.hidden = !available");
-    expect(viewSource).toContain("this.webSearchButton.disabled = !available || this.busy");
+    expect(viewSource).toContain("webSearchButtonState(this.plugin.settings.webSearch.mode, this.busy)");
     expect(viewSource).toContain("this.syncWebSearchButtonState();");
     expect(viewSource).not.toContain('this.webSearchButton.disabled = busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini"');
     expect(styles).toContain('inline-size: 72px');
+  });
+
+  it("hides unavailable web search through busy and restores it after a dedicated-Gemini refresh", () => {
+    expect(webSearchButtonState("dedicated-gemini", false)).toEqual({ hidden: false, disabled: false });
+    expect(webSearchButtonState("disabled", false)).toEqual({ hidden: true, disabled: true });
+    expect(webSearchButtonState("disabled", true)).toEqual({ hidden: true, disabled: true });
+    expect(webSearchButtonState("dedicated-gemini", true)).toEqual({ hidden: false, disabled: true });
+    expect(webSearchButtonState("dedicated-gemini", false)).toEqual({ hidden: false, disabled: false });
   });
 
   it("keeps consent decisions separate from web-search execution", () => {

@@ -43,11 +43,16 @@ import {
 } from "./composer-focus";
 import { findExpandedSourceButton } from "./source-highlight";
 import { StreamingMarkdownRenderer } from "./streaming-markdown-renderer";
-import type { WebSearchResult } from "../web-search/types";
+import type { WebSearchMode, WebSearchResult } from "../web-search/types";
 import { buildWebSearchHistory } from "../web-search/history";
 import { WebSearchError } from "../web-search/gemini-grounding";
 
 export const WIKI_COPILOT_VIEW_TYPE = "wiki-copilot-view";
+
+export function webSearchButtonState(mode: WebSearchMode, busy: boolean): { hidden: boolean; disabled: boolean } {
+  const available = mode === "dedicated-gemini";
+  return { hidden: !available, disabled: !available || busy };
+}
 
 interface AssistantMessageHandle {
   update(markdown: string): void;
@@ -1259,9 +1264,9 @@ export class WikiCopilotView extends ItemView {
   }
 
   private syncWebSearchButtonState(): void {
-    const available = this.plugin.settings.webSearch.mode === "dedicated-gemini";
-    this.webSearchButton.hidden = !available;
-    this.webSearchButton.disabled = !available || this.busy;
+    const state = webSearchButtonState(this.plugin.settings.webSearch.mode, this.busy);
+    this.webSearchButton.hidden = state.hidden;
+    this.webSearchButton.disabled = state.disabled;
   }
 
   private setBusy(busy: boolean): void {

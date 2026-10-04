@@ -75,6 +75,56 @@ describe("conversation Markdown", () => {
     expect(parseConversation(serializeConversation(webConversation))).toEqual(webConversation);
   });
 
+  it("round-trips pending clarification metadata on an assistant turn", () => {
+    const clarification = {
+      goal: "Recommend my next workout after Tempo.",
+      question: "Which workout did you complete immediately before Tempo?",
+      missing: "The workout immediately before Tempo.",
+      requiresSummary: true,
+      originUserTurnIndex: 0,
+      originAssistantTurnIndex: 1,
+      userRepliesSinceRequest: 0
+    };
+    const clarificationConversation: Conversation = {
+      ...conversation,
+      turns: [{ role: "user", content: "I did Tempo today; what should I do next?" }, {
+        role: "assistant",
+        content: "Which workout did you complete immediately before Tempo?",
+        pendingClarification: clarification
+      }]
+    };
+
+    expect(parseConversation(serializeConversation(clarificationConversation))).toEqual(clarificationConversation);
+  });
+
+  it.each([
+    ["an empty goal", { goal: "" }],
+    ["an overlong question", { question: "q".repeat(2_001) }],
+    ["a negative origin user index", { originUserTurnIndex: -1 }],
+    ["a fractional origin assistant index", { originAssistantTurnIndex: 1.5 }],
+    ["too many user replies", { userRepliesSinceRequest: 3 }]
+  ])("discards invalid pending clarification metadata with %s while retaining other assistant state", (_case, invalid) => {
+    const serialized = serializeConversation({
+      ...conversation,
+      turns: [{ role: "assistant", content: "Answer", sources: conversation.turns[1]?.role === "assistant" ? conversation.turns[1].sources : [], knowledgeBaseHit: false, webSearch: {
+        provider: "gemini", question: "Question", model: "gemini-2.5-flash", answer: "Answer", sources: [{ title: "Source", url: "https://example.com" }]
+      }, pendingClarification: ({
+        goal: "Recommend a workout.",
+        question: "What was immediately before Tempo?",
+        missing: "The workout before Tempo.",
+        requiresSummary: false,
+        originUserTurnIndex: 0,
+        originAssistantTurnIndex: 1,
+        userRepliesSinceRequest: 0,
+        ...invalid
+      } as never) }]
+    });
+
+    expect(parseConversation(serialized)?.turns).toEqual([{ role: "assistant", content: "Answer", sources: conversation.turns[1]?.role === "assistant" ? conversation.turns[1].sources : [], knowledgeBaseHit: false, webSearch: {
+      provider: "gemini", question: "Question", model: "gemini-2.5-flash", answer: "Answer", sources: [{ title: "Source", url: "https://example.com" }]
+    } }]);
+  });
+
   it.each([
     ["an empty question", ""],
     ["an overlong question", "q".repeat(20_001)]

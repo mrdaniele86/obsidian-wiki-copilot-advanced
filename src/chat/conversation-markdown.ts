@@ -1,4 +1,5 @@
 import type { AssistantConversationTurn, Conversation, ConversationRole, ConversationTurn } from "./conversation-types";
+import type { PendingClarification } from "./pending-clarification";
 
 const CONVERSATION_TYPE = "wiki-copilot-conversation";
 const MAX_WEB_SEARCH_MODEL_CHARACTERS = 200;
@@ -6,6 +7,7 @@ const MAX_WEB_SEARCH_ANSWER_CHARACTERS = 20_000;
 const MAX_WEB_SEARCH_SOURCES = 12;
 const MAX_WEB_SEARCH_SOURCE_TITLE_CHARACTERS = 500;
 const MAX_WEB_SEARCH_SOURCE_URL_CHARACTERS = 2_048;
+const MAX_CLARIFICATION_FIELD_CHARACTERS = 2_000;
 
 function frontmatterValue(value: string): string {
   return JSON.stringify(value);
@@ -45,8 +47,8 @@ function decodeText(value: string): string | null {
 }
 
 function assistantState(turn: ConversationTurn): string {
-  if (turn.role !== "assistant" || (turn.sources === undefined && turn.knowledgeBaseHit === undefined && turn.webSearch === undefined)) return "";
-  return encodeText(JSON.stringify({ sources: turn.sources, knowledgeBaseHit: turn.knowledgeBaseHit, webSearch: turn.webSearch }));
+  if (turn.role !== "assistant" || (turn.sources === undefined && turn.knowledgeBaseHit === undefined && turn.webSearch === undefined && turn.pendingClarification === undefined)) return "";
+  return encodeText(JSON.stringify({ sources: turn.sources, knowledgeBaseHit: turn.knowledgeBaseHit, webSearch: turn.webSearch, pendingClarification: turn.pendingClarification }));
 }
 
 function isWebSearchResult(value: unknown, legacyQuestion?: string): value is NonNullable<AssistantConversationTurn["webSearch"]> {
@@ -67,16 +69,32 @@ function isBoundedNonEmptyString(value: unknown, maximumLength: number): value i
   return typeof value === "string" && value.trim().length > 0 && value.length <= maximumLength;
 }
 
-function parseAssistantState(value: string, legacyQuestion?: string): Pick<AssistantConversationTurn, "sources" | "knowledgeBaseHit" | "webSearch"> | null {
+function isClarificationText(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && Array.from(value.trim()).length <= MAX_CLARIFICATION_FIELD_CHARACTERS;
+}
+
+function isPendingClarification(value: unknown): value is PendingClarification {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const pending = value as Record<string, unknown>;
+  const keys = Object.keys(pending);
+  if (keys.length !== 7 || !keys.every((key) => key === "goal" || key === "question" || key === "missing" || key === "requiresSummary" || key === "originUserTurnIndex" || key === "originAssistantTurnIndex" || key === "userRepliesSinceRequest")) return false;
+  return isClarificationText(pending.goal) && isClarificationText(pending.question) && isClarificationText(pending.missing) &&
+    typeof pending.requiresSummary === "boolean" &&
+    typeof pending.originUserTurnIndex === "number" && Number.isInteger(pending.originUserTurnIndex) && pending.originUserTurnIndex >= 0 &&
+    typeof pending.originAssistantTurnIndex === "number" && Number.isInteger(pending.originAssistantTurnIndex) && pending.originAssistantTurnIndex >= 0 &&
+    typeof pending.userRepliesSinceRequest === "number" && Number.isInteger(pending.userRepliesSinceRequest) && pending.userRepliesSinceRequest >= 0 && pending.userRepliesSinceRequest <= 2;
+}
+
+function parseAssistantState(value: string, legacyQuestion?: string): Pick<AssistantConversationTurn, "sources" | "knowledgeBaseHit" | "webSearch" | "pendingClarification"> | null {
   const decoded = decodeText(value);
   if (decoded === null) return null;
   try {
     const state: unknown = JSON.parse(decoded);
     if (!state || typeof state !== "object") return null;
-    const { sources, knowledgeBaseHit, webSearch } = state as { sources?: unknown; knowledgeBaseHit?: unknown; webSearch?: unknown };
+    const { sources, knowledgeBaseHit, webSearch, pendingClarification } = state as { sources?: unknown; knowledgeBaseHit?: unknown; webSearch?: unknown; pendingClarification?: unknown };
     if (sources !== undefined && !Array.isArray(sources)) return null;
     if (knowledgeBaseHit !== undefined && typeof knowledgeBaseHit !== "boolean") return null;
-    return { sources: sources as AssistantConversationTurn["sources"], knowledgeBaseHit, ...(isWebSearchResult(webSearch, legacyQuestion) ? { webSearch } : {}) };
+    return { sources: sources as AssistantConversationTurn["sources"], knowledgeBaseHit, ...(isWebSearchResult(webSearch, legacyQuestion) ? { webSearch } : {}), ...(isPendingClarification(pendingClarification) ? { pendingClarification } : {}) };
   } catch {
     return null;
   }

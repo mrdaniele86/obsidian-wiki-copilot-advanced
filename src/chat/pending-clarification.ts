@@ -19,7 +19,7 @@ export interface ResolvedClarification extends PendingClarification {
 }
 
 function boundedText(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.length <= MAX_FIELD_CHARACTERS;
+  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= MAX_FIELD_CHARACTERS;
 }
 
 function clarificationDirective(value: unknown): ClarificationDirective | null {

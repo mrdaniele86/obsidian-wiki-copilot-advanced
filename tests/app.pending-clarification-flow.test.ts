@@ -12,6 +12,8 @@ vi.mock("obsidian", () => ({
 }));
 
 import { WikiCopilotView } from "../src/ui/wiki-copilot-view";
+import { RequestCancelledError } from "../src/llm/request-timeout";
+import { StreamFallbackRequiredError } from "../src/llm/openai-compatible";
 
 const tempoPending = {
   goal: "recommend the next workout after Tempo",
@@ -112,5 +114,122 @@ describe("pending clarification in the chat view", () => {
       expect.any(Array),
       expect.objectContaining({ clarification: expect.objectContaining({ reply: "Soglia" }) })
     );
+  });
+
+  it("ignores and clears invalid pending metadata restored from a conversation", async () => {
+    const answer = vi.fn().mockResolvedValue({ markdown: "Normal answer", sources: [], knowledgeBaseHit: true });
+    const view = viewFor(answer);
+    const invalidPending = { ...tempoPending, originAssistantTurnIndex: 0 };
+    const turns = [
+      { role: "user" as const, content: "What next after Tempo?" },
+      { role: "assistant" as const, content: "Which workout came immediately before Tempo?", pendingClarification: invalidPending }
+    ];
+    view.turns = turns.map((turn) => ({ ...turn }));
+    view.conversation = { id: "saved", createdAt: "now", updatedAt: "now", title: "Tempo", turns };
+    (view.queryEl as { value: string }).value = "Soglia";
+
+    await (view.ask as () => Promise<void>)();
+
+    expect(answer).toHaveBeenCalledWith("Soglia", expect.any(Array), expect.objectContaining({ clarification: undefined }));
+    expect(turns[1]?.pendingClarification).toBeUndefined();
+  });
+
+  it("drops all pending clarification state when starting a new conversation", () => {
+    const view = viewFor(vi.fn());
+    view.turns = [{ role: "assistant", content: "Question", pendingClarification: tempoPending }];
+    view.conversation = { id: "saved", createdAt: "now", updatedAt: "now", title: "Tempo", turns: view.turns };
+    view.conversationPath = "saved.md";
+    view.chatEl = { empty: vi.fn() };
+    view.renderWelcome = vi.fn();
+    view.resetConversationComponent = vi.fn();
+
+    (view.startNewConversation as () => void)();
+
+    expect(view.turns).toEqual([]);
+    expect(view.conversation).toBeNull();
+    expect(view.conversationPath).toBeNull();
+  });
+
+  it("invalidates an older pending clarification after a Web assistant response", async () => {
+    const answer = vi.fn().mockResolvedValue({ markdown: "Normal answer", sources: [], knowledgeBaseHit: true });
+    const view = viewFor(answer);
+    const turns = [
+      { role: "user" as const, content: "What next after Tempo?" },
+      { role: "assistant" as const, content: "Which workout came immediately before Tempo?", pendingClarification: tempoPending },
+      { role: "user" as const, content: "Web question" },
+      { role: "assistant" as const, content: "Web answer" }
+    ];
+    view.turns = turns.map((turn) => ({ ...turn }));
+    view.conversation = { id: "saved", createdAt: "now", updatedAt: "now", title: "Tempo", turns };
+    (view.queryEl as { value: string }).value = "Soglia";
+
+    await (view.ask as () => Promise<void>)();
+
+    expect(answer).toHaveBeenCalledWith("Soglia", expect.any(Array), expect.objectContaining({ clarification: undefined }));
+    expect(turns[1]?.pendingClarification).toBeUndefined();
+  });
+
+  it("keeps a pending clarification untouched while a Web request is running", async () => {
+    const view = viewFor(vi.fn());
+    const turns = [
+      { role: "user" as const, content: "What next after Tempo?" },
+      { role: "assistant" as const, content: "Which workout came immediately before Tempo?", pendingClarification: tempoPending }
+    ];
+    view.turns = turns.map((turn) => ({ ...turn }));
+    view.conversation = { id: "saved", createdAt: "now", updatedAt: "now", title: "Tempo", turns };
+    (view.plugin as Record<string, unknown>).searchWeb = vi.fn().mockResolvedValue({
+      provider: "gemini", model: "test", question: "Web question", answer: "Web answer", sources: [{ title: "Source", url: "https://example.com" }]
+    });
+
+    await (view.runWebSearch as (question: string) => Promise<void>)("Web question");
+
+    expect(turns[1]?.pendingClarification).toEqual(tempoPending);
+  });
+
+  it("forwards clarification to the non-stream fallback and clears it after success", async () => {
+    const answer = vi.fn()
+      .mockRejectedValueOnce(new StreamFallbackRequiredError("stream-connection-failed"))
+      .mockResolvedValueOnce({ markdown: "Ho identificato: Soglia.", sources: [], knowledgeBaseHit: true });
+    const view = viewFor(answer);
+    const turns = [
+      { role: "user" as const, content: "What next after Tempo?" },
+      { role: "assistant" as const, content: "Which workout came immediately before Tempo?", pendingClarification: tempoPending }
+    ];
+    view.turns = turns.map((turn) => ({ ...turn }));
+    view.conversation = { id: "saved", createdAt: "now", updatedAt: "now", title: "Tempo", turns };
+    const retry = vi.fn();
+    view.appendError = vi.fn((_error: unknown, recovery: { action: () => void }) => {
+      retry.mockImplementation(recovery.action);
+      return { remove: vi.fn() };
+    });
+    const clarification = { ...tempoPending, reply: "Soglia" };
+
+    await (view.runQuestion as (question: string, history: unknown[], options: unknown) => Promise<void>)("Soglia", [...turns], {
+      appendUserMessage: true, clarification
+    });
+    retry();
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledTimes(2));
+
+    expect(answer).toHaveBeenLastCalledWith("Soglia", expect.any(Array), expect.objectContaining({
+      responseMode: "non-stream", clarification
+    }));
+    expect(turns[1]?.pendingClarification).toBeUndefined();
+  });
+
+  it("clears pending clarification when its follow-up is cancelled", async () => {
+    const answer = vi.fn().mockRejectedValue(new RequestCancelledError());
+    const view = viewFor(answer);
+    const turns = [
+      { role: "user" as const, content: "What next after Tempo?" },
+      { role: "assistant" as const, content: "Which workout came immediately before Tempo?", pendingClarification: tempoPending }
+    ];
+    view.turns = turns.map((turn) => ({ ...turn }));
+    view.conversation = { id: "saved", createdAt: "now", updatedAt: "now", title: "Tempo", turns };
+    (view.queryEl as { value: string }).value = "Soglia";
+    view.appendStoppedMessage = vi.fn();
+
+    await (view.ask as () => Promise<void>)();
+
+    expect(turns[1]?.pendingClarification).toBeUndefined();
   });
 });

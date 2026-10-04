@@ -99,6 +99,25 @@ describe("pending clarification flow", () => {
     expect(answer).toHaveBeenCalledOnce();
   });
 
+  it("does not require the summary opening when the clarification says it is unnecessary", async () => {
+    const plugin = Object.create(WikiCopilotPlugin.prototype) as Record<string, unknown>;
+    const retrieve = vi.fn(async (): Promise<RetrievalResult> => ({ query: "continuation", chunks: [], totalCandidates: 0, truncated: false }));
+    const answer = vi.fn(async (_question: string) => "Answer without summary.");
+    plugin.retrieve = retrieve;
+    plugin.llmClient = { answer };
+    plugin.indexCoordinator = { queryGuidance: "" };
+    plugin.settings = { model: { provider: "custom", serviceName: "Test", endpoint: "https://example.com/v1", model: "test" }, retrievalRange: "medium", retrievalMode: "fast" };
+    plugin.t = vi.fn((key: string) => key);
+    const clarification = { ...tempoClarification, requiresSummary: false };
+
+    await (plugin.answer as (question: string, history: Array<{ role: "user" | "assistant"; content: string }>, options: { clarification: ResolvedClarification }) => Promise<unknown>)("Soglia", [
+      { role: "user", content: "What next after Tempo?" },
+      { role: "assistant", content: "Which workout came immediately before Tempo?" }
+    ], { clarification });
+
+    expect(answer.mock.calls[0]?.[0]).not.toContain("Open the final reply exactly with `Ho identificato:`");
+  });
+
   it("keeps the original technical identifier when directive metadata is malicious", async () => {
     const plugin = Object.create(WikiCopilotPlugin.prototype) as Record<string, unknown>;
     const retrieve = vi.fn(async (question: string): Promise<RetrievalResult> => ({ query: question, chunks: [], totalCandidates: 0, truncated: false }));

@@ -658,23 +658,38 @@ export class WikiCopilotView extends ItemView {
     reply: string,
     history: ChatTurn[]
   ): { resolution: ResolvedClarification; assistantTurnIndex: number } | null {
-    for (let index = history.length - 1; index >= 0; index -= 1) {
-      const turn = history[index] as ConversationTurn | undefined;
-      if (turn?.role !== "assistant" || !turn.pendingClarification) continue;
-      const pending = turn.pendingClarification;
-      const original = history[pending.originUserTurnIndex];
-      const requested = history[pending.originAssistantTurnIndex];
-      const anchored = pending.originAssistantTurnIndex === index &&
-        pending.originAssistantTurnIndex === pending.originUserTurnIndex + 1 &&
-        original?.role === "user" && requested?.role === "assistant" &&
-        requested.content.includes(pending.question);
-      const resolution = anchored ? resolvePendingClarification(pending, reply) : null;
-      if (resolution) return { resolution, assistantTurnIndex: index };
-      this.clearPendingClarification(index);
-      void this.saveConversation();
+    const assistantTurnIndex = history.length - 1;
+    const turn = history[assistantTurnIndex] as ConversationTurn | undefined;
+    if (turn?.role !== "assistant" || !turn.pendingClarification) {
+      if (this.clearPendingClarificationsBefore(assistantTurnIndex)) {
+        void this.saveConversation();
+      }
       return null;
     }
+    const pending = turn.pendingClarification;
+    const original = history[pending.originUserTurnIndex];
+    const requested = history[pending.originAssistantTurnIndex];
+    const anchored = pending.originAssistantTurnIndex === assistantTurnIndex &&
+      pending.originAssistantTurnIndex === pending.originUserTurnIndex + 1 &&
+      original?.role === "user" && requested?.role === "assistant" &&
+      requested.content.includes(pending.question);
+    const resolution = anchored ? resolvePendingClarification(pending, reply) : null;
+    if (resolution) return { resolution, assistantTurnIndex };
+    this.clearPendingClarification(assistantTurnIndex);
+    void this.saveConversation();
     return null;
+  }
+
+  private clearPendingClarificationsBefore(endIndex: number): boolean {
+    let cleared = false;
+    for (let index = 0; index < endIndex; index += 1) {
+      const turn = this.turns[index] as ConversationTurn | undefined;
+      if (turn?.role === "assistant" && turn.pendingClarification) {
+        this.clearPendingClarification(index);
+        cleared = true;
+      }
+    }
+    return cleared;
   }
 
   private clearPendingClarification(assistantTurnIndex: number): void {
@@ -930,7 +945,8 @@ export class WikiCopilotView extends ItemView {
               errorContainer?.remove();
               void this.runQuestion(question, history, {
                 appendUserMessage: false,
-                responseMode: "non-stream"
+                responseMode: "non-stream",
+                clarification: options.clarification
               });
             }
           });

@@ -673,11 +673,11 @@ body.is-mobile .wiki-copilot-composer {
 }
 
 body.is-mobile.is-phone .wiki-copilot-composer {
-  margin-bottom: var(
-    --wiki-copilot-mobile-nav-clearance,
-    var(--view-bottom-spacing, 0px)
+  padding-bottom: max(
+    8px,
+    env(safe-area-inset-bottom),
+    var(--wiki-copilot-mobile-nav-clearance, var(--view-bottom-spacing, 0px))
   );
-  padding-bottom: max(8px, env(safe-area-inset-bottom));
 }
 
 .wiki-copilot-history-entry {

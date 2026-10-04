@@ -109,14 +109,19 @@ describe("mobile view interactions", () => {
     expect(styles).toContain('min-height: 44px');
   });
 
-  it("refreshes an enabled compact web-search action after Gemini settings change", () => {
+  it("refreshes compact web-search action visibility after Gemini settings change", () => {
     const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 
     expect(viewSource).toContain('setIcon(this.webSearchButton, "search")');
     expect(viewSource).toContain('this.webSearchButton.createSpan({ text: this.plugin.t("view.webSearch.compactAction") })');
     expect(viewSource).toContain('this.webSearchLabel.setText(this.plugin.t("view.webSearch.compactAction"))');
     expect(viewSource).toContain('this.webSearchButton.setAttribute("aria-label", this.plugin.t("view.webSearch.action"))');
-    expect(viewSource).toContain('this.webSearchButton.disabled = busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini"');
+    expect(viewSource).toContain("private syncWebSearchButtonState(): void");
+    expect(viewSource).toContain('const available = this.plugin.settings.webSearch.mode === "dedicated-gemini"');
+    expect(viewSource).toContain("this.webSearchButton.hidden = !available");
+    expect(viewSource).toContain("this.webSearchButton.disabled = !available || this.busy");
+    expect(viewSource).toContain("this.syncWebSearchButtonState();");
+    expect(viewSource).not.toContain('this.webSearchButton.disabled = busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini"');
     expect(styles).toContain('inline-size: 72px');
   });
 

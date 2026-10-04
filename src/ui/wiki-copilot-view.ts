@@ -149,6 +149,7 @@ export class WikiCopilotView extends ItemView {
     container.querySelector(".wiki-copilot-shortcut")?.setText(this.plugin.t("composer.shortcut"));
     this.webSearchLabel.setText(this.plugin.t("view.webSearch.compactAction"));
     this.webSearchButton.setAttribute("aria-label", this.plugin.t("view.webSearch.action"));
+    this.syncWebSearchButtonState();
     this.setBusy(this.busy);
     const welcome = this.chatEl?.querySelector(".wiki-copilot-welcome");
     if (welcome) {
@@ -306,7 +307,7 @@ export class WikiCopilotView extends ItemView {
     });
     setIcon(this.webSearchButton, "search");
     this.webSearchLabel = this.webSearchButton.createSpan({ text: this.plugin.t("view.webSearch.compactAction") });
-    this.webSearchButton.disabled = this.busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini";
+    this.syncWebSearchButtonState();
     this.registerDomEvent(this.webSearchButton, "click", () => void this.openWebSearchConsent());
     this.askButton = buttons.createEl("button", { cls: "mod-cta", text: this.plugin.t("composer.send") });
     this.registerDomEvent(this.askButton, "mousedown", (event) => {
@@ -1257,10 +1258,16 @@ export class WikiCopilotView extends ItemView {
     return container;
   }
 
+  private syncWebSearchButtonState(): void {
+    const available = this.plugin.settings.webSearch.mode === "dedicated-gemini";
+    this.webSearchButton.hidden = !available;
+    this.webSearchButton.disabled = !available || this.busy;
+  }
+
   private setBusy(busy: boolean): void {
     this.busy = busy;
     this.askButton.disabled = false;
-    this.webSearchButton.disabled = busy || this.plugin.settings.webSearch.mode !== "dedicated-gemini";
+    this.syncWebSearchButtonState();
     this.askButton.setText(busy ? this.plugin.t("composer.stop") : this.plugin.t("composer.send"));
     this.askButton.setAttribute("aria-label", busy ? this.plugin.t("composer.stopAria") : this.plugin.t("composer.sendAria"));
     if (busy) {

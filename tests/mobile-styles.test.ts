@@ -39,8 +39,9 @@ describe("mobile interaction styles", () => {
       /body\.is-mobile \.wiki-copilot-composer\s*\{[^}]*padding:\s*8px 10px;/su
     );
     expect(styles).toMatch(
-      /body\.is-mobile\.is-phone \.wiki-copilot-composer\s*\{[^}]*margin-bottom:\s*var\(\s*--wiki-copilot-mobile-nav-clearance,\s*var\(--view-bottom-spacing, 0px\)\s*\);/su
+      /body\.is-mobile\.is-phone \.wiki-copilot-composer\s*\{[^}]*padding-bottom:\s*max\(\s*8px,\s*env\(safe-area-inset-bottom\),\s*var\(\s*--wiki-copilot-mobile-nav-clearance,\s*var\(--view-bottom-spacing, 0px\)\s*\)\s*\);/su
     );
+    expect(styles).not.toMatch(/body\.is-mobile\.is-phone \.wiki-copilot-composer\s*\{[^}]*margin-bottom:/su);
     expect(styles).not.toMatch(/keyboard-animating[^}]*wiki-copilot-composer/su);
     expect(styles).not.toContain("--wiki-copilot-composer-lift");
     expect(styles).not.toMatch(/wiki-copilot-composer[^}]*transform:/su);
@@ -60,7 +61,7 @@ describe("mobile interaction styles", () => {
 
   it("keeps mobile composer content above the browser navigation safe area", () => {
     expect(styles).toMatch(
-      /body\.is-mobile\.is-phone \.wiki-copilot-composer\s*\{[^}]*padding-bottom:\s*max\(\s*8px,\s*env\(safe-area-inset-bottom\)\s*\);/su
+      /body\.is-mobile\.is-phone \.wiki-copilot-composer\s*\{[^}]*padding-bottom:\s*max\(\s*8px,\s*env\(safe-area-inset-bottom\),\s*var\(\s*--wiki-copilot-mobile-nav-clearance,\s*var\(--view-bottom-spacing, 0px\)\s*\)\s*\);/su
     );
     expect(styles).toMatch(
       /body\.is-mobile \.wiki-copilot-composer-controls\s*\{[^}]*min-width:\s*0;/su

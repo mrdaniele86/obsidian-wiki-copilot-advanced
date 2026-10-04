@@ -101,7 +101,9 @@ function effectiveQuestionForAnswer(
   ) {
     return question;
   }
-  return `Original user question:\n${original.content}\n\n${formatClarificationContinuation(clarification)}`;
+  return `Original user question:\n${original.content}\n\n${formatClarificationContinuation(clarification)}${clarification.requiresSummary
+    ? "\n\nOpen the final reply exactly with `Ho identificato:` before the recommendation."
+    : ""}`;
 }
 
 export default class WikiCopilotPlugin extends Plugin {

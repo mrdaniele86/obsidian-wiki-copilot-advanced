@@ -53,6 +53,7 @@ describe("pending clarification flow", () => {
       expect(question).toContain("Original user question:\nWhat next after Tempo?");
       expect(question).toContain("Original objective:\nrecommend the next workout after Tempo");
       expect(question).toContain("Reply received:\nBefore it I did Soglia.");
+      expect(question).toContain("Open the final reply exactly with `Ho identificato:` before the recommendation.");
       options.onClarification?.({
         goal: "recommend the next workout after Tempo",
         question: "Which workout came immediately before Tempo?",

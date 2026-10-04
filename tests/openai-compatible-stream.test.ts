@@ -542,4 +542,29 @@ describe("OpenAICompatibleClient streaming", () => {
       } satisfies Partial<ModelStreamInterruptedError>);
     expect(requester).not.toHaveBeenCalled();
   });
+
+  it("does not emit a partial hidden clarification directive when a stream is interrupted", async () => {
+    let pullCount = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pullCount === 0) {
+          pullCount += 1;
+          controller.enqueue(encoder.encode("data: {\"choices\":[{\"delta\":{\"content\":\"Which workout came before Tempo?\\n\\n<!-- wiki-copilot-clarification {\\\"goal\\\":\\\"next workout\\\"\"}}]}\n\n"));
+          return;
+        }
+        controller.error(new Error("connection lost"));
+      }
+    });
+    const deltas: string[] = [];
+    const client = new OpenAICompatibleClient(() => null, {
+      fetcher: vi.fn(async () => new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } })),
+      timerHost: timerHost()
+    });
+
+    await expect(client.answer("What next after Tempo?", context, [], "", settings(), 90_000, {
+      onDelta: (delta) => deltas.push(delta)
+    })).rejects.toMatchObject({ partialText: "Which workout came before Tempo?" });
+
+    expect(deltas.join("")).toBe("Which workout came before Tempo?\n\n");
+  });
 });

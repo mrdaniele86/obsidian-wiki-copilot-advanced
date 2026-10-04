@@ -85,6 +85,25 @@ export interface AnswerOptions {
   clarification?: ResolvedClarification;
 }
 
+function effectiveQuestionForAnswer(
+  question: string,
+  history: readonly ChatTurn[],
+  clarification: ResolvedClarification | undefined
+): string {
+  if (!clarification) return question;
+  const original = history[clarification.originUserTurnIndex];
+  const requested = history[clarification.originAssistantTurnIndex];
+  if (
+    !original || original.role !== "user" ||
+    !requested || requested.role !== "assistant" ||
+    clarification.originAssistantTurnIndex !== clarification.originUserTurnIndex + 1 ||
+    !requested.content.includes(clarification.question)
+  ) {
+    return question;
+  }
+  return `Original user question:\n${original.content}\n\n${formatClarificationContinuation(clarification)}`;
+}
+
 export default class WikiCopilotPlugin extends Plugin {
   override settings: WikiCopilotSettings = DEFAULT_SETTINGS;
   indexCoordinator!: IndexCoordinator;
@@ -488,9 +507,7 @@ export default class WikiCopilotPlugin extends Plugin {
     if (options.signal?.aborted) {
       throw new RequestCancelledError();
     }
-    const effectiveQuestion = options.clarification
-      ? formatClarificationContinuation(options.clarification)
-      : question;
+    const effectiveQuestion = effectiveQuestionForAnswer(question, history, options.clarification);
     const retrieval = await this.retrieve(
       effectiveQuestion,
       history,

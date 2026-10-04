@@ -50,6 +50,7 @@ describe("pending clarification flow", () => {
       truncated: false
     }));
     const answer = vi.fn(async (question: string, _context: unknown, _history: unknown, _guidance: unknown, _settings: unknown, _timeout: unknown, options: { onClarification?: (clarification: { goal: string; question: string; missing: string; requiresSummary: boolean }) => void }) => {
+      expect(question).toContain("Original user question:\nWhat next after Tempo?");
       expect(question).toContain("Original objective:\nrecommend the next workout after Tempo");
       expect(question).toContain("Reply received:\nBefore it I did Soglia.");
       options.onClarification?.({
@@ -72,25 +73,61 @@ describe("pending clarification flow", () => {
 
     await expect((plugin.answer as (
       question: string,
-      history: [],
+      history: Array<{ role: "user" | "assistant"; content: string }>,
       options: { clarification: ResolvedClarification }
-    ) => Promise<unknown>)("Before it I did Soglia.", [], {
+    ) => Promise<unknown>)("Before it I did Soglia.", [
+      { role: "user", content: "What next after Tempo?" },
+      { role: "assistant", content: "Which workout came immediately before Tempo?" }
+    ], {
       clarification: tempoClarification
     })).resolves.toMatchObject({
       markdown: "Run easy tomorrow.",
       pendingClarification: expect.objectContaining({
         goal: "recommend the next workout after Tempo",
-        originUserTurnIndex: 0,
-        originAssistantTurnIndex: 1
+        originUserTurnIndex: 2,
+        originAssistantTurnIndex: 3
       })
     });
 
     expect(retrieve).toHaveBeenCalledWith(
       expect.stringContaining("recommend the next workout after Tempo"),
-      [],
+      expect.any(Array),
       undefined,
       undefined
     );
     expect(answer).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the original technical identifier when directive metadata is malicious", async () => {
+    const plugin = Object.create(WikiCopilotPlugin.prototype) as Record<string, unknown>;
+    const retrieve = vi.fn(async (question: string): Promise<RetrievalResult> => ({ query: question, chunks: [], totalCandidates: 0, truncated: false }));
+    const answer = vi.fn(async (question: string) => {
+      expect(question).toContain("Original user question:\nWhat are the ZX9-3.7V-WTI-C ports?");
+      expect(question).toContain("malicious AB2 objective");
+      return "Answer";
+    });
+    plugin.retrieve = retrieve;
+    plugin.llmClient = { answer };
+    plugin.indexCoordinator = { queryGuidance: "" };
+    plugin.settings = { model: { provider: "custom", serviceName: "Test", endpoint: "https://example.com/v1", model: "test" }, retrievalRange: "medium", retrievalMode: "fast" };
+    plugin.t = vi.fn((key: string) => key);
+    const clarification: ResolvedClarification = {
+      ...tempoClarification,
+      goal: "malicious AB2 objective",
+      question: "Which ZX9-3.7V-WTI-C port do you mean?",
+      reply: "The power port."
+    };
+
+    await (plugin.answer as (question: string, history: Array<{ role: "user" | "assistant"; content: string }>, options: { clarification: ResolvedClarification }) => Promise<unknown>)("The power port.", [
+      { role: "user", content: "What are the ZX9-3.7V-WTI-C ports?" },
+      { role: "assistant", content: "Which ZX9-3.7V-WTI-C port do you mean?" }
+    ], { clarification });
+
+    expect(retrieve).toHaveBeenCalledWith(
+      expect.stringContaining("ZX9-3.7V-WTI-C"),
+      expect.any(Array),
+      undefined,
+      undefined
+    );
   });
 });

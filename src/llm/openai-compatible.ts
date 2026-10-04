@@ -122,7 +122,16 @@ const ANSWER_HISTORY_MAX_TURNS = 10;
 const ANSWER_HISTORY_MAX_CHARACTERS = 24_000;
 const PLANNER_HISTORY_MAX_TURNS = 4;
 const PLANNER_HISTORY_MAX_CHARACTERS = 8_000;
+const CLARIFICATION_DIRECTIVE_PREFIX = "<!-- wiki-copilot-clarification ";
 const CLARIFICATION_DIRECTIVE_INSTRUCTION = `When essential information is missing, ask one clear question and append exactly one final hidden HTML comment in this exact shape: <!-- wiki-copilot-clarification {"goal":"...","question":"...","missing":"...","requiresSummary":true} -->. Use it only when a clarification is required; otherwise append no such comment.`;
+
+function directivePrefixSuffixLength(text: string): number {
+  const maximum = Math.min(text.length, CLARIFICATION_DIRECTIVE_PREFIX.length - 1);
+  for (let length = maximum; length > 0; length -= 1) {
+    if (text.endsWith(CLARIFICATION_DIRECTIVE_PREFIX.slice(0, length))) return length;
+  }
+  return 0;
+}
 
 function retrievalPlannerPrompt(mode: RetrievalPlanningMode): string {
   const queryCount = mode === "fast" ? "3 to 6" : "4 to 10";
@@ -491,6 +500,9 @@ export class OpenAICompatibleClient {
     const timerHost = this.dependencies.timerHost ?? currentWindow();
     let timedOut = false;
     let receivedText = false;
+    let streamedText = "";
+    let emittedLength = 0;
+    let directiveStarted = false;
     const cancel = (): void => controller.abort();
     options.signal?.addEventListener("abort", cancel, { once: true });
     const timeoutId = timerHost.setTimeout(() => {
@@ -544,9 +556,23 @@ export class OpenAICompatibleClient {
         },
         onDelta: (delta) => {
           receivedText = true;
-          options.onDelta?.(delta);
+          streamedText += delta;
+          if (directiveStarted) return;
+          const directiveStart = streamedText.indexOf(CLARIFICATION_DIRECTIVE_PREFIX);
+          if (directiveStart >= 0) {
+            options.onDelta?.(streamedText.slice(emittedLength, directiveStart));
+            emittedLength = directiveStart;
+            directiveStarted = true;
+            return;
+          }
+          const safeEnd = streamedText.length - directivePrefixSuffixLength(streamedText);
+          options.onDelta?.(streamedText.slice(emittedLength, safeEnd));
+          emittedLength = safeEnd;
         }
       });
+      if (!directiveStarted && emittedLength < streamedText.length) {
+        options.onDelta?.(streamedText.slice(emittedLength));
+      }
       return finishWarning(result.text, result.finishReason, options.onWarning);
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -568,7 +594,7 @@ export class OpenAICompatibleClient {
       if (error instanceof ChatCompletionStreamInterruptedError && error.partialText) {
         throw new ModelStreamInterruptedError(
           "stream-interrupted",
-          error.partialText,
+          extractClarificationDirective(error.partialText).markdown,
           { cause: error }
         );
       }

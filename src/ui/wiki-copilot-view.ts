@@ -24,7 +24,11 @@ import {
 import { localizeModelError } from "./model-response-localization";
 import type { ChatTurn } from "../core/types";
 import { assistantRenderState } from "../chat/conversation-types";
-import type { Conversation, StoredConversation } from "../chat/conversation-types";
+import type { Conversation, ConversationTurn, StoredConversation } from "../chat/conversation-types";
+import {
+  resolvePendingClarification,
+  type ResolvedClarification
+} from "../chat/pending-clarification";
 import { searchConversations } from "../chat/conversation-search";
 import type { ModelResponseMode } from "../llm/openai-compatible";
 import { RequestCancelledError } from "../llm/request-timeout";
@@ -54,6 +58,7 @@ interface AssistantMessageHandle {
 interface RunQuestionOptions {
   appendUserMessage: boolean;
   responseMode?: ModelResponseMode;
+  clarification?: ResolvedClarification;
 }
 
 export class WikiCopilotView extends ItemView {
@@ -643,9 +648,44 @@ export class WikiCopilotView extends ItemView {
       return;
     }
     const history = [...this.turns];
+    const clarification = this.pendingClarificationFor(question, history);
     this.queryEl.value = "";
     this.resetComposerHeight();
-    await this.runQuestion(question, history, { appendUserMessage: true });
+    await this.runQuestion(question, history, { appendUserMessage: true, clarification: clarification?.resolution });
+  }
+
+  private pendingClarificationFor(
+    reply: string,
+    history: ChatTurn[]
+  ): { resolution: ResolvedClarification; assistantTurnIndex: number } | null {
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+      const turn = history[index] as ConversationTurn | undefined;
+      if (turn?.role !== "assistant" || !turn.pendingClarification) continue;
+      const pending = turn.pendingClarification;
+      const original = history[pending.originUserTurnIndex];
+      const requested = history[pending.originAssistantTurnIndex];
+      const anchored = pending.originAssistantTurnIndex === index &&
+        pending.originAssistantTurnIndex === pending.originUserTurnIndex + 1 &&
+        original?.role === "user" && requested?.role === "assistant" &&
+        requested.content.includes(pending.question);
+      const resolution = anchored ? resolvePendingClarification(pending, reply) : null;
+      if (resolution) return { resolution, assistantTurnIndex: index };
+      this.clearPendingClarification(index);
+      void this.saveConversation();
+      return null;
+    }
+    return null;
+  }
+
+  private clearPendingClarification(assistantTurnIndex: number): void {
+    const conversations: Array<ConversationTurn[] | undefined> = [
+      this.turns as ConversationTurn[],
+      this.conversation?.turns
+    ];
+    for (const turns of conversations) {
+      const turn = turns?.[assistantTurnIndex];
+      if (turn?.role === "assistant") delete turn.pendingClarification;
+    }
   }
 
   private async runWebSearch(
@@ -765,6 +805,7 @@ export class WikiCopilotView extends ItemView {
       const answer = await this.plugin.answer(question, history, {
         signal: requestController.signal,
         responseMode: options.responseMode,
+        clarification: options.clarification,
         onProgress: updateProgress,
         onRetrieved: (retrievedSources, hit) => {
           if (sequence === this.requestSequence) {
@@ -825,7 +866,14 @@ export class WikiCopilotView extends ItemView {
           answer.knowledgeBaseHit
         );
       }
-      this.turns.push({ role: "assistant", content: answer.markdown });
+      this.turns.push({
+        role: "assistant",
+        content: answer.markdown,
+        ...(answer.pendingClarification ? { pendingClarification: answer.pendingClarification } : {})
+      });
+      if (options.clarification) {
+        this.clearPendingClarification(options.clarification.originAssistantTurnIndex);
+      }
       const now = new Date().toISOString();
       this.conversation ??= {
         id: this.newConversationId(),
@@ -839,7 +887,8 @@ export class WikiCopilotView extends ItemView {
         role: "assistant",
         content: answer.markdown,
         sources: answer.sources,
-        knowledgeBaseHit: answer.knowledgeBaseHit
+        knowledgeBaseHit: answer.knowledgeBaseHit,
+        ...(answer.pendingClarification ? { pendingClarification: answer.pendingClarification } : {})
       });
       this.conversation.updatedAt = now;
       await this.saveConversation();
@@ -852,6 +901,10 @@ export class WikiCopilotView extends ItemView {
         waitingForFirstContent = false;
         loading.remove();
         if (error instanceof RequestCancelledError) {
+          if (options.clarification) {
+            this.clearPendingClarification(options.clarification.originAssistantTurnIndex);
+            await this.saveConversation();
+          }
           if (streamState.message && streamState.markdown) {
             await streamState.message.interrupt(
               streamState.markdown,

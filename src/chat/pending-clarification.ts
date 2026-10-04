@@ -1,6 +1,6 @@
 const DIRECTIVE_PREFIX = "<!-- wiki-copilot-clarification ";
 const MAX_FIELD_CHARACTERS = 2_000;
-const MAX_DIRECTIVE_CHARACTERS = 7_000;
+const MAX_RAW_DIRECTIVE_UTF16_CHARACTERS = 50_000;
 const QUESTION_PUNCTUATION = /[?？¿؟]/u;
 
 export interface ClarificationDirective {
@@ -46,8 +46,9 @@ function clarificationDirective(value: unknown): ClarificationDirective | null {
 
 interface DirectiveMatch {
   start: number;
+  payloadStart: number;
+  closingIndex: number;
   end: number;
-  payload: string;
 }
 
 function directiveMatches(markdown: string): DirectiveMatch[] {
@@ -59,10 +60,10 @@ function directiveMatches(markdown: string): DirectiveMatch[] {
     const payloadStart = start + DIRECTIVE_PREFIX.length;
     const closing = markdown.indexOf("-->", payloadStart);
     if (closing < 0) {
-      matches.push({ start, end: markdown.length, payload: markdown.slice(payloadStart) });
+      matches.push({ start, payloadStart, closingIndex: markdown.length, end: markdown.length });
       return matches;
     }
-    matches.push({ start, end: closing + 3, payload: markdown.slice(payloadStart, closing) });
+    matches.push({ start, payloadStart, closingIndex: closing, end: closing + 3 });
     cursor = closing + 3;
   }
 }
@@ -86,10 +87,10 @@ export function extractClarificationDirective(markdown: string): {
   if (directives.length !== 1) return { markdown: cleanMarkdown };
 
   const directive = directives[0]!;
-  if (markdown.slice(directive.end).trim().length > 0 || characterCount(directive.payload) > MAX_DIRECTIVE_CHARACTERS) return { markdown: cleanMarkdown };
+  if (markdown.slice(directive.end).trim().length > 0 || directive.closingIndex - directive.payloadStart > MAX_RAW_DIRECTIVE_UTF16_CHARACTERS) return { markdown: cleanMarkdown };
 
   try {
-    const clarification = clarificationDirective(JSON.parse(directive.payload));
+    const clarification = clarificationDirective(JSON.parse(markdown.slice(directive.payloadStart, directive.closingIndex)));
     return clarification ? { markdown: cleanMarkdown, clarification } : { markdown: cleanMarkdown };
   } catch {
     return { markdown: cleanMarkdown };

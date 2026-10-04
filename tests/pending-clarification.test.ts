@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   extractClarificationDirective,
   formatClarificationContinuation,
@@ -68,6 +68,27 @@ describe("pending clarification", () => {
     })} -->`);
 
     expect(parsed).toEqual({ markdown: "" });
+  });
+
+  it("rejects a multi-megabyte raw directive before parsing JSON", () => {
+    const parse = vi.spyOn(JSON, "parse");
+    const parsed = extractClarificationDirective(`<!-- wiki-copilot-clarification {"ignored":"${"x".repeat(1_000_000)}"} -->`);
+
+    expect(parsed).toEqual({ markdown: "" });
+    expect(parse).not.toHaveBeenCalled();
+    parse.mockRestore();
+  });
+
+  it("accepts valid fields whose JSON escaping expands their raw directive", () => {
+    const goal = "\u0000".repeat(2_000);
+    const parsed = extractClarificationDirective(`<!-- wiki-copilot-clarification ${JSON.stringify({
+      goal,
+      question: "Question",
+      missing: "Missing",
+      requiresSummary: false
+    })} -->`);
+
+    expect(parsed.clarification?.goal).toBe(goal);
   });
 
   it.each([

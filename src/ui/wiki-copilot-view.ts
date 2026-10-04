@@ -82,7 +82,7 @@ export class WikiCopilotView extends ItemView {
   private historyOpen = false;
   private historySearchOpen = false;
   private historySearchQuery = "";
-  private turns: ChatTurn[] = [];
+  private turns: ConversationTurn[] = [];
   private conversation: Conversation | null = null;
   private conversationPath: string | null = null;
   private unsubscribeStatus: (() => void) | null = null;
@@ -662,10 +662,10 @@ export class WikiCopilotView extends ItemView {
 
   private pendingClarificationFor(
     reply: string,
-    history: ChatTurn[]
+    history: ConversationTurn[]
   ): { resolution: ResolvedClarification; assistantTurnIndex: number } | null {
     const assistantTurnIndex = history.length - 1;
-    const turn = history[assistantTurnIndex] as ConversationTurn | undefined;
+    const turn = history[assistantTurnIndex];
     if (turn?.role !== "assistant" || !turn.pendingClarification) {
       if (this.clearPendingClarificationsBefore(assistantTurnIndex)) {
         void this.saveConversation();
@@ -689,7 +689,7 @@ export class WikiCopilotView extends ItemView {
   private clearPendingClarificationsBefore(endIndex: number): boolean {
     let cleared = false;
     for (let index = 0; index < endIndex; index += 1) {
-      const turn = this.turns[index] as ConversationTurn | undefined;
+      const turn = this.turns[index];
       if (turn?.role === "assistant" && turn.pendingClarification) {
         this.clearPendingClarification(index);
         cleared = true;
@@ -700,7 +700,7 @@ export class WikiCopilotView extends ItemView {
 
   private clearPendingClarification(assistantTurnIndex: number): void {
     const conversations: Array<ConversationTurn[] | undefined> = [
-      this.turns as ConversationTurn[],
+      this.turns,
       this.conversation?.turns
     ];
     for (const turns of conversations) {

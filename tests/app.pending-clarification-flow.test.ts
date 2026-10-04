@@ -14,6 +14,7 @@ vi.mock("obsidian", () => ({
 import { WikiCopilotView } from "../src/ui/wiki-copilot-view";
 import { RequestCancelledError } from "../src/llm/request-timeout";
 import { StreamFallbackRequiredError } from "../src/llm/openai-compatible";
+import type { Conversation, ConversationTurn } from "../src/chat/conversation-types";
 
 const tempoPending = {
   goal: "recommend the next workout after Tempo",
@@ -25,8 +26,16 @@ const tempoPending = {
   userRepliesSinceRequest: 0
 };
 
-function viewFor(answer: ReturnType<typeof vi.fn>): Record<string, unknown> {
-  const view = Object.create(WikiCopilotView.prototype) as Record<string, unknown>;
+interface ViewHarness extends Record<string, unknown> {
+  turns: ConversationTurn[];
+  conversation: Conversation | null;
+  conversationPath: string | null;
+  queryEl: { value: string };
+  plugin: Record<string, unknown>;
+}
+
+function viewFor(answer: ReturnType<typeof vi.fn>): ViewHarness {
+  const view: ViewHarness = Object.create(WikiCopilotView.prototype);
   view.busy = false;
   view.requestSequence = 0;
   view.activeRequest = null;
@@ -185,7 +194,10 @@ describe("pending clarification in the chat view", () => {
     const pendingSearch = (view.runWebSearch as (question: string) => Promise<void>)("Web question");
     await vi.waitFor(() => expect(finishSearch).toBeTypeOf("function"));
 
-    expect((view.turns[1] as { pendingClarification?: unknown })?.pendingClarification).toEqual(tempoPending);
+    const pendingAssistantTurn = view.turns[1];
+    expect(pendingAssistantTurn?.role).toBe("assistant");
+    if (pendingAssistantTurn?.role !== "assistant") throw new Error("Expected an assistant turn");
+    expect(pendingAssistantTurn.pendingClarification).toEqual(tempoPending);
     expect(turns[1]?.pendingClarification).toEqual(tempoPending);
 
     finishSearch?.({
@@ -193,7 +205,7 @@ describe("pending clarification in the chat view", () => {
     });
     await pendingSearch;
 
-    expect((view.turns[1] as { pendingClarification?: unknown })?.pendingClarification).toBeUndefined();
+    expect(pendingAssistantTurn.pendingClarification).toBeUndefined();
     expect(turns[1]?.pendingClarification).toBeUndefined();
   });
 

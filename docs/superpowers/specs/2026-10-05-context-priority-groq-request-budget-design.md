@@ -18,6 +18,7 @@ The observed consequence is that an active conversation can forget that the penu
 - Keep generic non-Groq custom endpoints unchanged.
 - Do not alter saved settings, stored conversation history, Vault retrieval semantics, normal Enter behavior, consent, or Web Search.
 - Avoid presenting a response without valid citations as Vault-grounded when evidence was supplied.
+- Keep the desktop composer action row, including the “Send” button, fully above Obsidian's status/synchronization bar at every supported desktop viewport height.
 
 ## Non-goals
 
@@ -58,6 +59,10 @@ Non-Groq endpoints preserve their existing automatic behavior and payload shape.
 
 If retrieved evidence exists and the completed response contains no valid source marker, the current validation warning remains visible. The result must be labelled as ungrounded/general rather than as a supported Vault answer, preventing the source count from implying validation. No source text is invented and no automatic resend occurs.
 
+### Desktop composer clearance
+
+The desktop composer reserves bottom clearance for the actual status/synchronization bar plus the plugin's normal spacing. The action row remains visible without requiring a viewport resize, scrolling, or a mobile-only override. The desktop rule must use the Obsidian status-bar dimension where available and retain a safe fallback where it is not exposed. Mobile composer behavior remains unchanged.
+
 ## Data flow
 
 ```text
@@ -79,4 +84,5 @@ user question + enabled history
 5. A normal Groq rate limit is still classified as rate-limited and offers no reduced-context retry.
 6. Custom non-Groq endpoints retain their current automatic payload behavior.
 7. Evidence-bearing responses with no valid source marker are visibly treated as ungrounded rather than as citation-verified Vault responses.
-8. New and updated tests cover all criteria; `pnpm check` and `pnpm verify:brat-beta` pass before any release proposal.
+8. On desktop, the full Send button remains above the status/synchronization bar in the normal plugin pane; mobile layout remains unchanged.
+9. New and updated tests cover all criteria; `pnpm check` and `pnpm verify:brat-beta` pass before any release proposal.

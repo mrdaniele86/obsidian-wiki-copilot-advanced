@@ -1,4 +1,4 @@
-# Handoff: Groq context budgeting, conversation-context toggle, and GitHub API request
+# Handoff: Groq context budgeting and conversation-context toggle
 
 Copy the prompt below into a new Codex conversation.
 
@@ -22,7 +22,6 @@ Use the existing release branch and worktree; do not create another worktree:
 
 2. Add a user setting to enable or disable inclusion of recent conversation context for normal Vault questions. It must be **disabled by default**. When disabled, normal chat behavior must match the original plugin: the model receives the new question and retrieved Vault evidence, but no earlier user/assistant turns. This does not authorize sending Vault notes to unrelated providers.
 
-3. The user asked to use “GitHub API” as an AI provider. First clarify the intended service. **Do not implement GitHub Models inference as a provider:** official GitHub documentation says GitHub Models, including its inference API and BYOK, was retired on 30 July 2026. GitHub REST API is not an LLM inference provider. Present viable alternatives (for example Azure AI Foundry, or a generic OpenAI-compatible endpoint that the user supplies) and obtain a concrete choice before implementing a new provider.
 
 ## Important current state
 
@@ -84,4 +83,4 @@ Read the code before changing it. Root cause investigation already found:
 
 ## First requested response
 
-Start with a concise evidence-based design proposal. State that GitHub Models inference is retired, then ask the user to choose the intended alternative for “GitHub API” before any provider code is added. The Groq and conversation-context work may be planned independently in the meantime.
+Start with a concise evidence-based design proposal for the Groq and conversation-context work, then obtain approval before implementation.

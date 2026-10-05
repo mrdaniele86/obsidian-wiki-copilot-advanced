@@ -121,12 +121,24 @@ describe("technical identifier integrity", () => {
   });
 
   it("uses a domain-neutral no-substitution answer when an exact identifier is unavailable", () => {
-    const message = exactIdentifierMissingMessage("所有ms6功耗");
+    const message = exactIdentifierMissingMessage("所有ms6功耗", (identifiers) => `Missing ${identifiers}`);
     expect(message).toContain("MS6");
-    expect(message).toContain("不会用近似匹配内容替代回答");
+    expect(message).toContain("Missing");
     expect(message).not.toContain("iCloud");
     expect(message).not.toContain("其他型号");
-    expect(exactIdentifierMissingMessage("电路板功耗")).toBeNull();
+    expect(exactIdentifierMissingMessage("电路板功耗", (identifiers) => identifiers)).toBeNull();
+  });
+
+  it("limits hard no-substitution behavior to strong identifiers", () => {
+    expect(hasTechnicalIdentifierAnchor("8x300", result([mcx]))).toBe(true);
+    expect(discardUnanchoredTechnicalResult("8x300", result([mcx])).chunks).toEqual([mcx]);
+    expect(exactIdentifierMissingMessage("8x300", (identifiers) => `Missing ${identifiers}`)).toBeNull();
+
+    expect(hasTechnicalIdentifierAnchor("MS6", result([mcx]))).toBe(false);
+    expect(discardUnanchoredTechnicalResult("MS6", result([mcx])).chunks).toEqual([]);
+    expect(exactIdentifierMissingMessage("MS6", (identifiers) => `Missing ${identifiers}`)).toBe("Missing MS6");
+    expect(exactIdentifierMissingMessage("PCBA-001", (identifiers) => `Missing ${identifiers}`))
+      .toBe("Missing PCBA001");
   });
 
   it("prioritizes subject-relevant chunks without dropping the rest of the requested family", () => {

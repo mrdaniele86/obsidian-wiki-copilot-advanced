@@ -530,7 +530,10 @@ export default class WikiCopilotPlugin extends Plugin {
     });
     const missingExactIdentifier = knowledgeBaseHit
       ? null
-      : exactIdentifierMissingMessage(retrieval.query);
+      : exactIdentifierMissingMessage(
+        retrieval.query,
+        (identifiers) => this.t("main.answer.missingIdentifier", { identifiers })
+      );
     if (missingExactIdentifier && modelHistory.length === 0) {
       options.onProgress?.(this.t("main.progress.missingIdentifier"));
       return {

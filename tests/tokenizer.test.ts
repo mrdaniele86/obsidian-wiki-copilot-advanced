@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { containsCjk, technicalIdentifierTokens, tokenizeForSearch } from "../src/core/tokenizer";
+import {
+  containsCjk,
+  strictTechnicalIdentifierTokens,
+  technicalIdentifierTokens,
+  tokenizeForSearch
+} from "../src/core/tokenizer";
 
 describe("tokenizeForSearch", () => {
   it("extracts exact identifiers from mixed Chinese queries", () => {
@@ -42,5 +47,15 @@ describe("tokenizeForSearch", () => {
 
   it("normalizes full-width characters", () => {
     expect(tokenizeForSearch("ＡＰＩ １２３")).toEqual(expect.arrayContaining(["api", "123"]));
+  });
+
+  it("distinguishes strong hard-guard identifiers from workout notation", () => {
+    expect(technicalIdentifierTokens("8x300 MS6 PCBA-001")).toEqual(
+      expect.arrayContaining(["8x300", "ms6", "pcba001"])
+    );
+    expect(strictTechnicalIdentifierTokens("8x300 MS6 PCBA-001")).toEqual(
+      expect.arrayContaining(["ms6", "pcba001"])
+    );
+    expect(strictTechnicalIdentifierTokens("8x300")).toEqual([]);
   });
 });

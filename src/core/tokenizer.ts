@@ -151,6 +151,19 @@ export function technicalIdentifierTokens(input: string): string[] {
   return [...identifiers];
 }
 
+/**
+ * Extracts product/document-like identifiers for hard exact-match boundaries.
+ * This deliberately leaves the broader technical extractor intact for lexical
+ * retrieval, so values such as workout notation can still inform ranking.
+ */
+export function strictTechnicalIdentifierTokens(input: string): string[] {
+  return technicalIdentifierTokens(input).filter((identifier) =>
+    /^[a-z]/iu.test(identifier) &&
+    (identifier.match(/[a-z]/giu)?.length ?? 0) >= 2 &&
+    /\d/u.test(identifier)
+  );
+}
+
 export function containsCjk(input: string): boolean {
   return CJK_RUN.test(input);
 }

@@ -1,4 +1,4 @@
-import { technicalIdentifierTokens, tokenizeForSearch } from "./tokenizer";
+import { strictTechnicalIdentifierTokens, technicalIdentifierTokens, tokenizeForSearch } from "./tokenizer";
 import type { ChatTurn, RetrievalResult, RetrievedChunk } from "./types";
 
 const EXPLICIT_FOLLOW_UP = /^(?:(?:这个|这些|它们?|上述|前面|刚才|之前|继续|接着|再说|那个|那些|那|那么|还有|另外|对应|同样|其中|其它|其他)|(?:this|that|those|it|they|continue|what about|and)\b)/iu;
@@ -151,7 +151,7 @@ export function matchesTechnicalIdentifierFamily(
 }
 
 export function hasTechnicalIdentifierAnchor(query: string, result: RetrievalResult): boolean {
-  const identifiers = technicalIdentifierTokens(query);
+  const identifiers = strictTechnicalIdentifierTokens(query);
   if (identifiers.length === 0) {
     return true;
   }
@@ -167,7 +167,7 @@ export function discardUnanchoredTechnicalResult(
   query: string,
   result: RetrievalResult
 ): RetrievalResult {
-  if (technicalIdentifierTokens(query).length === 0) {
+  if (strictTechnicalIdentifierTokens(query).length === 0) {
     return result;
   }
   const chunks = keepTechnicalIdentifierFamily(query, result.chunks);
@@ -178,16 +178,16 @@ export function discardUnanchoredTechnicalResult(
   };
 }
 
-export function exactIdentifierMissingMessage(query: string): string | null {
-  const identifiers = technicalIdentifierTokens(query);
+export function exactIdentifierMissingMessage(
+  query: string,
+  localize: (identifiers: string) => string
+): string | null {
+  const identifiers = strictTechnicalIdentifierTokens(query);
   if (identifiers.length === 0) {
     return null;
   }
   const label = identifiers.map((identifier) => identifier.toLocaleUpperCase()).join("、");
-  return [
-    `当前设备尚未检索到与 **${label}** 精确匹配的知识库依据。`,
-    "为避免混入其他实体、版本或条目的资料，本次不会用近似匹配内容替代回答。请确认相关文件已同步到当前设备，或手动重建知识索引后重试。"
-  ].join("\n\n");
+  return localize(label);
 }
 
 /**
@@ -198,7 +198,7 @@ export function keepTechnicalIdentifierFamily(
   query: string,
   chunks: RetrievedChunk[]
 ): RetrievedChunk[] {
-  const identifiers = technicalIdentifierTokens(query);
+  const identifiers = strictTechnicalIdentifierTokens(query);
   if (identifiers.length === 0) {
     return chunks;
   }

@@ -16,6 +16,7 @@ import type { ModelProvider } from "./model-presets";
 import { isUiLanguage } from "./i18n";
 import type { UiLanguage } from "./i18n";
 import type { WebSearchMode, WebSearchSettings } from "./web-search/types";
+import { isGroqEndpoint } from "./llm/prompt-budget";
 
 export type RetrievalMode = "precise" | "fast";
 
@@ -36,6 +37,13 @@ function tokenLimit(value: unknown): TokenLimitSetting {
     : "automatic";
 }
 
+function groqTpmLimit(value: unknown): TokenLimitSetting {
+  if (value === "automatic") return value;
+  return typeof value === "number" && Number.isInteger(value) && value >= 512 && value <= 32_000
+    ? value
+    : "automatic";
+}
+
 export interface ModelSettings {
   provider: ModelProvider;
   serviceName: string;
@@ -44,6 +52,7 @@ export interface ModelSettings {
   includeRecentConversationContext?: boolean;
   maximumInputTokens?: TokenLimitSetting;
   maximumOutputTokens?: TokenLimitSetting;
+  groqTotalTokensPerMinute?: TokenLimitSetting;
 }
 
 export interface WikiCopilotSettings {
@@ -86,7 +95,8 @@ export const DEFAULT_SETTINGS: WikiCopilotSettings = {
     model: "",
     includeRecentConversationContext: false,
     maximumInputTokens: "automatic",
-    maximumOutputTokens: "automatic"
+    maximumOutputTokens: "automatic",
+    groqTotalTokensPerMinute: "automatic"
   },
   webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS }
 };
@@ -171,7 +181,8 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
       model: savedModel || defaultModelForProvider(provider),
       includeRecentConversationContext: rawModel.includeRecentConversationContext === true,
       maximumInputTokens: tokenLimit(rawModel.maximumInputTokens),
-      maximumOutputTokens: tokenLimit(rawModel.maximumOutputTokens)
+      maximumOutputTokens: tokenLimit(rawModel.maximumOutputTokens),
+      groqTotalTokensPerMinute: groqTpmLimit(rawModel.groqTotalTokensPerMinute)
     },
     webSearch: {
       mode: webSearchMode,
@@ -203,6 +214,7 @@ type WikiCopilotSettingKey =
   | "includeRecentConversationContext"
   | "maximumInputTokens"
   | "maximumOutputTokens"
+  | "groqTotalTokensPerMinute"
   | "retrievalMode"
   | "webSearchMode"
   | "webSearchGeminiModel"
@@ -340,6 +352,12 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
             name: t("settings.model.maximumOutputTokens.name"),
             desc: t("settings.model.maximumOutputTokens.desc"),
             control: { type: "text", key: "maximumOutputTokens", placeholder: t("settings.model.tokenLimit.placeholder") }
+          },
+          {
+            name: t("settings.model.groqTotalTokensPerMinute.name"),
+            desc: t("settings.model.groqTotalTokensPerMinute.desc"),
+            visible: () => isGroqEndpoint(this.plugin.settings.model.endpoint),
+            control: { type: "text", key: "groqTotalTokensPerMinute", placeholder: t("settings.model.tokenLimit.placeholder") }
           }
         ]
       },
@@ -429,6 +447,8 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
         return String(this.plugin.settings.model.maximumInputTokens ?? "automatic");
       case "maximumOutputTokens":
         return String(this.plugin.settings.model.maximumOutputTokens ?? "automatic");
+      case "groqTotalTokensPerMinute":
+        return String(this.plugin.settings.model.groqTotalTokensPerMinute ?? "automatic");
       case "retrievalMode":
         return this.plugin.settings.retrievalMode;
       case "webSearchMode":
@@ -491,6 +511,13 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
           ? "automatic"
           : tokenLimit(Number(value));
         this.plugin.settings.model.maximumOutputTokens = normalized;
+        break;
+      }
+      case "groqTotalTokensPerMinute": {
+        const normalized = typeof value === "string" && /^automatic$/iu.test(value.trim())
+          ? "automatic"
+          : groqTpmLimit(Number(value));
+        this.plugin.settings.model.groqTotalTokensPerMinute = normalized;
         break;
       }
       case "retrievalMode":

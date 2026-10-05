@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `2.1.1-beta.12`: Add a configurable Groq account TPM cap that reserves output before prompt budgeting, show input/output/TPM estimates, clarify output-length warnings, preserve visible plain-text clarification replies, and keep the desktop Send button above Obsidian's status bar.
+
 - `2.1.1-beta.11`: Preserve an immediate plain-text clarification as a one-turn local fallback when a provider omits the hidden clarification directive.
 
 - `2.1.1-beta.10`: Add configurable input/output token budgets, conservative Groq request sizing, optional recent conversation context, localized provider-safe errors, and manual reduced-context recovery.

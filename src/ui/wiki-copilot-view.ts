@@ -669,7 +669,19 @@ export class WikiCopilotView extends ItemView {
   ): { resolution: ResolvedClarification; assistantTurnIndex: number } | null {
     const assistantTurnIndex = history.length - 1;
     const turn = history[assistantTurnIndex];
-    if (turn?.role !== "assistant" || !turn.pendingClarification) {
+    if (turn?.role !== "assistant") {
+      if (this.clearPendingClarificationsBefore(assistantTurnIndex)) {
+        void this.saveConversation();
+      }
+      return null;
+    }
+    const visibleOriginal = history[assistantTurnIndex - 1];
+    const visibleFallback = visibleOriginal?.role === "user"
+      ? fallbackPendingClarification(visibleOriginal.content, turn.content, assistantTurnIndex - 1, assistantTurnIndex)
+      : undefined;
+    if (!turn.pendingClarification) {
+      const resolution = visibleFallback ? resolvePendingClarification(visibleFallback, reply) : null;
+      if (resolution) return { resolution, assistantTurnIndex };
       if (this.clearPendingClarificationsBefore(assistantTurnIndex)) {
         void this.saveConversation();
       }
@@ -834,9 +846,13 @@ export class WikiCopilotView extends ItemView {
         reducedContext: options.reducedContext,
         onProgress: updateProgress,
         onPromptBudget: (budget) => {
-          updateProgress(this.plugin.t("view.promptBudget", {
+          updateProgress(budget.totalTpm === undefined ? this.plugin.t("view.promptBudget", {
             used: budget.usedTokens,
             limit: budget.limitTokens
+          }) : this.plugin.t("view.groqPromptBudget", {
+            input: budget.usedTokens,
+            output: budget.outputTokens ?? 0,
+            total: budget.totalTpm
           }));
         },
         onRetrieved: (retrievedSources, hit) => {

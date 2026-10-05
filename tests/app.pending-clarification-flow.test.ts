@@ -56,6 +56,34 @@ function viewFor(answer: ReturnType<typeof vi.fn>): ViewHarness {
 }
 
 describe("pending clarification in the chat view", () => {
+  it("continues a visible immediate Italian clarification when its metadata is absent", async () => {
+    const answer = vi.fn().mockResolvedValue({ markdown: "Ho identificato: 8x300, poi Tempo.", sources: [], knowledgeBaseHit: true });
+    const view = viewFor(answer);
+    const turns: ConversationTurn[] = [
+      { role: "user", content: "Oggi ho fatto un allenamento a tempo, che allenamento devo fare successivo?" },
+      {
+        role: "assistant",
+        content: "Per calcolare il prossimo allenamento con la matrice di compatibilit\u00e0 \u00e8 necessario conoscere i due ultimi allenamenti.\nHai indicato l\u2019ultimo: Tempo.\n\nQuale allenamento hai svolto immediatamente prima di questo tempo?\n\n(Inoltre, se hai dolore, recupero Garmin/Training Readiness basso, sonno scadente, gambe pesanti o una gara imminente, fammi sapere.)"
+      }
+    ];
+    view.turns = turns.map((turn) => ({ ...turn }));
+    view.conversation = { id: "saved", createdAt: "now", updatedAt: "now", title: "Tempo", turns };
+    (view.queryEl as { value: string }).value = "Prima di tempo ho fatto 8x300";
+
+    await (view.ask as () => Promise<void>)();
+
+    expect(answer).toHaveBeenCalledWith(
+      "Prima di tempo ho fatto 8x300",
+      expect.any(Array),
+      expect.objectContaining({
+        clarification: expect.objectContaining({
+          goal: "Oggi ho fatto un allenamento a tempo, che allenamento devo fare successivo?",
+          reply: "Prima di tempo ho fatto 8x300"
+        })
+      })
+    );
+  });
+
   it("keeps a plain-text immediate clarification anchored when the model omits its hidden directive", async () => {
     const answer = vi.fn()
       .mockResolvedValueOnce({

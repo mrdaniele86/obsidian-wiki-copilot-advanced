@@ -9,6 +9,14 @@ import { localizeModelError, localizeModelResponseDetail } from "../src/ui/model
 
 describe("model response localization", () => {
   it.each([
+    ["it", "La risposta ha raggiunto il limite di Token massimi in output e potrebbe essere incompleta."],
+    ["en", "The answer reached the Maximum output tokens limit and may be incomplete."],
+    ["zh", "回答已达到最大输出 Token 限制，内容可能不完整。"]
+  ] as const)("explains that the length warning is about output for %s", (language, expected) => {
+    expect(createTranslator(language)("view.model.lengthWarning")).toBe(expected);
+  });
+
+  it.each([
     ["it", "Il servizio non supporta le risposte in streaming; uso della modalità compatibilità."],
     ["en", "The service does not support streaming responses; using compatibility mode."],
     ["zh", "服务不支持流式响应，已使用兼容模式。"]

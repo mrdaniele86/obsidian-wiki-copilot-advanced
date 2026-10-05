@@ -88,7 +88,8 @@ describe("retrieval mode settings", () => {
       model: "",
       includeRecentConversationContext: false,
       maximumInputTokens: "automatic",
-      maximumOutputTokens: "automatic"
+      maximumOutputTokens: "automatic",
+      groqTotalTokensPerMinute: "automatic"
     });
     expect(DEFAULT_SETTINGS.model).toEqual(settings.model);
   });
@@ -175,17 +176,21 @@ describe("model response mode settings", () => {
     expect(loadWikiCopilotSettings(undefined).model).toMatchObject({
       includeRecentConversationContext: false,
       maximumInputTokens: "automatic",
-      maximumOutputTokens: "automatic"
+      maximumOutputTokens: "automatic",
+      groqTotalTokensPerMinute: "automatic"
     });
     expect(loadWikiCopilotSettings({ model: {
       maximumInputTokens: 8_000,
       maximumOutputTokens: 1_024,
+      groqTotalTokensPerMinute: 8_000,
       includeRecentConversationContext: true
     } }).model).toMatchObject({
       includeRecentConversationContext: true,
       maximumInputTokens: 8_000,
-      maximumOutputTokens: 1_024
+      maximumOutputTokens: 1_024,
+      groqTotalTokensPerMinute: 8_000
     });
+    expect(loadWikiCopilotSettings({ model: { groqTotalTokensPerMinute: 511 } }).model.groqTotalTokensPerMinute).toBe("automatic");
   });
 
   it("does not expose a response-mode choice in settings", () => {

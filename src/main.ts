@@ -73,7 +73,7 @@ export interface AnswerOptions {
   signal?: AbortSignal;
   responseMode?: ModelResponseMode;
   reducedContext?: boolean;
-  onPromptBudget?: (budget: { usedTokens: number; limitTokens: number }) => void;
+  onPromptBudget?: (budget: { usedTokens: number; limitTokens: number; outputTokens?: number; totalTpm?: number }) => void;
   onProgress?: (message: string) => void;
   onDelta?: (delta: string) => void;
   onRetrieved?: (

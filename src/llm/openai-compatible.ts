@@ -13,7 +13,7 @@ import {
   readChatCompletionStream
 } from "./chat-completion-stream";
 import { completionRequestOptions } from "./completion-request";
-import { isGroqEndpoint, planPromptBudget } from "./prompt-budget";
+import { groqPromptLimit, isGroqEndpoint, planPromptBudget } from "./prompt-budget";
 import { buildSystemPrompt } from "./prompt";
 import { RequestCancelledError, RequestTimeoutError } from "./request-timeout";
 import { parseRetrievalQueries } from "../core/retrieval-plan";
@@ -49,7 +49,7 @@ export interface CompletionAnswerOptions {
   onWarning?: (warning: ModelCompletionWarning) => void;
   onClarification?: (clarification: ClarificationDirective) => void;
   reducedContext?: boolean;
-  onPromptBudget?: (budget: { usedTokens: number; limitTokens: number }) => void;
+  onPromptBudget?: (budget: { usedTokens: number; limitTokens: number; outputTokens?: number; totalTpm?: number }) => void;
 }
 
 export interface RetrievalPlanningOptions {
@@ -119,7 +119,7 @@ interface PreparedCompletionRequest {
   url: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
-  promptBudget?: { usedTokens: number; limitTokens: number };
+  promptBudget?: { usedTokens: number; limitTokens: number; outputTokens?: number; totalTpm?: number };
 }
 
 const ANSWER_HISTORY_MAX_TURNS = 10;
@@ -379,9 +379,19 @@ export class OpenAICompatibleClient {
   ): PreparedCompletionRequest {
     const headers = this.requestHeaders(settings);
 
-    const configuredLimit = typeof settings.maximumInputTokens === "number"
+    const groq = isGroqEndpoint(settings.endpoint);
+    const inputLimit = typeof settings.maximumInputTokens === "number"
       ? settings.maximumInputTokens
-      : isGroqEndpoint(settings.endpoint) ? 7_000 : undefined;
+      : groq ? 7_000 : undefined;
+    const outputLimit = typeof settings.maximumOutputTokens === "number"
+      ? settings.maximumOutputTokens
+      : 512;
+    const configuredLimit = groq
+      ? groqPromptLimit(inputLimit, outputLimit, settings.groqTotalTokensPerMinute)
+      : inputLimit;
+    if (groq && configuredLimit !== undefined && configuredLimit <= 0) {
+      throw new ModelRequestError("input-too-large");
+    }
     const requestedLimit = reducedContext ? Math.min(configuredLimit ?? 2_000, 2_000) : configuredLimit;
     if (requestedLimit === undefined) {
       return {
@@ -435,7 +445,11 @@ export class OpenAICompatibleClient {
       },
       promptBudget: plan.limitTokens === undefined ? undefined : {
         usedTokens: plan.usedTokens,
-        limitTokens: plan.limitTokens
+        limitTokens: plan.limitTokens,
+        ...(groq ? {
+          outputTokens: outputLimit,
+          totalTpm: typeof settings.groqTotalTokensPerMinute === "number" ? settings.groqTotalTokensPerMinute : 8_000
+        } : {})
       }
     };
   }

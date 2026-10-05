@@ -20,6 +20,16 @@ export interface PromptBudgetPlan {
 
 const SAFETY_MARGIN = 0.12;
 const MESSAGE_OVERHEAD_TOKENS = 8;
+const AUTOMATIC_GROQ_TPM = 8_000;
+
+export function groqPromptLimit(
+  inputLimit: number | undefined,
+  outputLimit: number,
+  totalTpm: number | "automatic" | undefined
+): number {
+  const accountLimit = typeof totalTpm === "number" ? totalTpm : AUTOMATIC_GROQ_TPM;
+  return Math.max(0, Math.min(inputLimit ?? 7_000, accountLimit - outputLimit));
+}
 
 function textTokens(value: string): number {
   let ordinaryAscii = 0;

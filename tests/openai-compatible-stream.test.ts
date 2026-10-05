@@ -60,6 +60,25 @@ afterEach(() => {
 });
 
 describe("OpenAICompatibleClient streaming", () => {
+  it("reserves configured Groq output from the account TPM before budgeting the prompt", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(responseStream([
+      "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+      "data: [DONE]\n\n"
+    ]), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+    const client = new OpenAICompatibleClient(() => null, { fetcher, timerHost: timerHost() });
+    const budgets: Array<{ usedTokens: number; limitTokens: number }> = [];
+
+    await client.answer("question", context, [], "", {
+      ...settings(), endpoint: "https://api.groq.com/openai/v1", maximumInputTokens: 8_000,
+      maximumOutputTokens: 4_000, groqTotalTokensPerMinute: 8_000
+    }, 90_000, { onPromptBudget: (budget) => budgets.push(budget) });
+
+    const request = fetcher.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body)) as { max_tokens?: number };
+    expect(body.max_tokens).toBe(4_000);
+    expect(budgets[0]).toMatchObject({ limitTokens: 4_000, outputTokens: 4_000, totalTpm: 8_000 });
+  });
+
   it("plans bounded lexical query variants without sending an answer request", async () => {
     const requester = vi.fn(async (_request: unknown) => nonStreamingResponse(
       '{"queries":["PCBA test requirements","PCBA printed circuit board assembly acceptance criteria"]}'

@@ -92,6 +92,32 @@ describe("OpenAICompatibleClient streaming", () => {
     ).toBeLessThanOrEqual(8_000);
   });
 
+  it("uses the effective planner and answer limits for targeted Groq GPT-OSS requests", async () => {
+    const requester = vi.fn(async (_request: unknown) => nonStreamingResponse('{"queries":["workout"]}'));
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(responseStream([
+      "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+      "data: [DONE]\n\n"
+    ]), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+    const client = new OpenAICompatibleClient(() => null, { fetcher, requester, timerHost: timerHost() });
+    const groqGptOssSettings = {
+      ...settings(), endpoint: "https://api.groq.com/openai/v1", model: "openai/gpt-oss-20b"
+    };
+
+    await client.planRetrievalQueries("what next?", groqGptOssSettings, 15_000);
+    await client.answer("what next?", context, [], "", groqGptOssSettings, 90_000);
+
+    const planner = JSON.parse(String((requester.mock.calls[0]?.[0] as { body?: string }).body));
+    const answer = JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body));
+    expect(planner).toMatchObject({
+      max_completion_tokens: 256, reasoning_effort: "low", include_reasoning: false
+    });
+    expect(planner).not.toHaveProperty("max_tokens");
+    expect(answer).toMatchObject({
+      max_completion_tokens: 512, reasoning_effort: "low", include_reasoning: false
+    });
+    expect(answer).not.toHaveProperty("max_tokens");
+  });
+
   it("leaves automatic output unset for non-Groq custom planner and answer requests", async () => {
     const requester = vi.fn(async (_request: unknown) => nonStreamingResponse('{"queries":["workout"]}'));
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(responseStream([
@@ -107,13 +133,13 @@ describe("OpenAICompatibleClient streaming", () => {
     expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as unknown as RequestInit).body))).not.toHaveProperty("max_tokens");
   });
 
-  it("rejects an impossible Groq planner allocation before dispatch", async () => {
+  it("skips an impossible Groq planner allocation before dispatch", async () => {
     const requester = vi.fn(async (_request: unknown) => nonStreamingResponse('{"queries":["workout"]}'));
     const client = new OpenAICompatibleClient(() => null, { requester, timerHost: timerHost() });
 
     await expect(client.planRetrievalQueries("what next?", {
       ...settings(), endpoint: "https://api.groq.com/openai/v1", groqTotalTokensPerMinute: 768
-    }, 15_000)).rejects.toMatchObject({ code: "input-too-large" });
+    }, 15_000)).resolves.toEqual(["what next?"]);
     expect(requester).not.toHaveBeenCalled();
   });
 
@@ -179,8 +205,8 @@ describe("OpenAICompatibleClient streaming", () => {
     const body = JSON.parse(String(request.body)) as { max_tokens?: number };
     expect(body.max_tokens).toBe(4_000);
     expect(budgets[0]).toMatchObject({
-      limitTokens: 1_647,
-      plannerReservationTokens: 1_903,
+      limitTokens: 3_520,
+      plannerReservationTokens: 480,
       outputTokens: 4_000,
       totalTpm: 8_000
     });
@@ -488,6 +514,24 @@ describe("OpenAICompatibleClient streaming", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("classifies a textless targeted GPT-OSS compatibility response", async () => {
+    const requester = vi.fn(async () => ({
+      status: 200,
+      headers: {},
+      arrayBuffer: new ArrayBuffer(0),
+      json: { choices: [{ message: { reasoning: "private chain of thought" } }] },
+      text: JSON.stringify({ choices: [{ message: { reasoning: "private chain of thought" } }] })
+    }));
+    const client = new OpenAICompatibleClient(() => null, { requester, timerHost: timerHost() });
+    const targetedSettings = {
+      ...settings(), endpoint: "https://api.groq.com/openai/v1", model: "openai/gpt-oss-20b"
+    };
+
+    await expect(client.answer("question", context, [], "", targetedSettings, 90_000, {
+      responseMode: "non-stream"
+    })).rejects.toMatchObject({ code: "reasoning-exhausted" });
+  });
+
   it("falls back before sending when the runtime has no streaming primitives", async () => {
     const requester = vi.fn(async (_request: unknown) => nonStreamingResponse());
     const client = new OpenAICompatibleClient(() => null, {
@@ -666,6 +710,38 @@ describe("OpenAICompatibleClient streaming", () => {
         reason: "stream-interrupted",
         partialText: "部分"
       } satisfies Partial<ModelStreamInterruptedError>);
+    expect(requester).not.toHaveBeenCalled();
+  });
+
+  it("classifies a textless targeted GPT-OSS JSON stream response without a retry", async () => {
+    const fetcher = vi.fn(async () => new Response(
+      JSON.stringify({ choices: [{ message: { reasoning: "private chain of thought" } }] }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    ));
+    const requester = vi.fn(async () => nonStreamingResponse());
+    const client = new OpenAICompatibleClient(() => null, { fetcher, requester, timerHost: timerHost() });
+    const targetedSettings = {
+      ...settings(), endpoint: "https://api.groq.com/openai/v1", model: "openai/gpt-oss-120b"
+    };
+
+    await expect(client.answer("question", context, [], "", targetedSettings, 90_000))
+      .rejects.toMatchObject({ code: "reasoning-exhausted" });
+    expect(requester).not.toHaveBeenCalled();
+  });
+
+  it("classifies a reasoning-only targeted GPT-OSS SSE response without a retry", async () => {
+    const fetcher = vi.fn(async () => new Response(responseStream([
+      "data: {\"choices\":[{\"delta\":{\"reasoning\":\"private chain of thought\"},\"finish_reason\":\"stop\"}]}\n\n",
+      "data: [DONE]\n\n"
+    ]), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+    const requester = vi.fn(async () => nonStreamingResponse());
+    const client = new OpenAICompatibleClient(() => null, { fetcher, requester, timerHost: timerHost() });
+    const targetedSettings = {
+      ...settings(), endpoint: "https://api.groq.com/openai/v1", model: "openai/gpt-oss-20b"
+    };
+
+    await expect(client.answer("question", context, [], "", targetedSettings, 90_000))
+      .rejects.toMatchObject({ code: "reasoning-exhausted" });
     expect(requester).not.toHaveBeenCalled();
   });
 

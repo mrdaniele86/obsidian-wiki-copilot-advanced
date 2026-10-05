@@ -24,7 +24,6 @@ const MESSAGE_OVERHEAD_TOKENS = 8;
 const AUTOMATIC_GROQ_TPM = 8_000;
 const GROQ_PLANNER_OUTPUT_TOKENS = 256;
 const GROQ_PLANNER_INPUT_TOKENS = 2_000;
-const GROQ_MINIMUM_ANSWER_INPUT_TOKENS = 1_200;
 
 export interface GroqActionBudget {
   totalTpm: number;
@@ -41,21 +40,22 @@ export function groqActionBudget(
 ): GroqActionBudget {
   const accountLimit = typeof totalTpm === "number" ? totalTpm : AUTOMATIC_GROQ_TPM;
   const answerOutputTokens = outputLimit ?? 512;
-  const inputBeforeMargin = Math.max(0, Math.min(
+  const answerInputBeforeMargin = Math.max(0, Math.min(
     inputLimit ?? 7_000,
-    accountLimit - GROQ_PLANNER_OUTPUT_TOKENS - answerOutputTokens
- ));
-  const safeInputTokens = Math.floor(inputBeforeMargin * (1 - SAFETY_MARGIN));
+    accountLimit - answerOutputTokens
+));
+  const answerInputTokens = Math.floor(answerInputBeforeMargin * (1 - SAFETY_MARGIN));
+  const plannerCapacity = Math.max(0, accountLimit - answerInputTokens - answerOutputTokens);
+  const plannerOutputTokens = Math.min(GROQ_PLANNER_OUTPUT_TOKENS, plannerCapacity);
   const plannerInputTokens = Math.min(
     GROQ_PLANNER_INPUT_TOKENS,
-    Math.floor(safeInputTokens / 2),
-    Math.max(0, safeInputTokens - GROQ_MINIMUM_ANSWER_INPUT_TOKENS)
+    Math.max(0, plannerCapacity - plannerOutputTokens)
   );
   return {
     totalTpm: accountLimit,
     plannerInputTokens,
-    plannerOutputTokens: GROQ_PLANNER_OUTPUT_TOKENS,
-    answerInputTokens: safeInputTokens - plannerInputTokens,
+    plannerOutputTokens,
+    answerInputTokens,
     answerOutputTokens
   };
 }

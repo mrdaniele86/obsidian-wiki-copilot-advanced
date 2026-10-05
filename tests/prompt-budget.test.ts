@@ -11,9 +11,9 @@ describe("prompt budget", () => {
   it("allocates one safe Groq action budget for planner and answer", () => {
     expect(groqActionBudget(undefined, undefined, "automatic")).toEqual({
       totalTpm: 8_000,
-      plannerInputTokens: 2_000,
+      plannerInputTokens: 1_072,
       plannerOutputTokens: 256,
-      answerInputTokens: 4_160,
+      answerInputTokens: 6_160,
       answerOutputTokens: 512
     });
   });

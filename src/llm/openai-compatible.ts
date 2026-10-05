@@ -9,10 +9,11 @@ import {
 import { providerRequiresApiKey } from "../model-presets";
 import type { ModelSettings } from "../settings";
 import {
+  ChatCompletionStreamError,
   ChatCompletionStreamInterruptedError,
   readChatCompletionStream
 } from "./chat-completion-stream";
-import { completionRequestOptions } from "./completion-request";
+import { completionRequestOptions, isGroqGptOssModel } from "./completion-request";
 import { groqActionBudget, isGroqEndpoint, planPromptBudget } from "./prompt-budget";
 import { buildSystemPrompt } from "./prompt";
 import { RequestCancelledError, RequestTimeoutError } from "./request-timeout";
@@ -35,7 +36,7 @@ export type ModelResponseMode = "auto" | "stream" | "non-stream";
 export type CompletionActivity = "response-headers" | "stream-data";
 export type ModelResponseDetail = "streaming-unavailable" | "streaming-unsupported" | "complete-response";
 export type StreamFallbackReason = "streaming-unavailable" | "response-not-streamable" | "stream-connection-failed";
-export type ModelRequestErrorCode = "request-failed" | "input-too-large" | "rate-limited" | "empty-response";
+export type ModelRequestErrorCode = "request-failed" | "input-too-large" | "rate-limited" | "empty-response" | "reasoning-exhausted";
 export type ModelConfigurationErrorCode = "invalid-endpoint" | "missing-service-name" | "missing-endpoint-or-model" | "missing-api-key";
 export type ModelCompletionWarning = "length" | "content-filter";
 export type ModelStreamInterruptionReason = "insufficient-system-resource" | "stream-interrupted";
@@ -119,6 +120,7 @@ interface PreparedCompletionRequest {
   url: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
+  isGroqGptOss: boolean;
   promptBudget?: { usedTokens: number; limitTokens: number; plannerReservationTokens?: number; outputTokens?: number; totalTpm?: number };
 }
 
@@ -361,6 +363,7 @@ export class OpenAICompatibleClient {
       mode,
       history
     );
+    if (!request) return [query];
     const response = await this.answerNonStreaming(
       request,
       timeoutMilliseconds,
@@ -380,6 +383,7 @@ export class OpenAICompatibleClient {
     const headers = this.requestHeaders(settings);
 
     const groq = isGroqEndpoint(settings.endpoint);
+    const groqGptOss = isGroqGptOssModel(settings);
     const inputLimit = typeof settings.maximumInputTokens === "number"
       ? settings.maximumInputTokens
       : groq ? 7_000 : undefined;
@@ -398,6 +402,7 @@ export class OpenAICompatibleClient {
       return {
         url: completionUrl(settings.endpoint),
         headers,
+        isGroqGptOss: groqGptOss,
         body: {
           model: settings.model,
           messages: [
@@ -405,7 +410,7 @@ export class OpenAICompatibleClient {
             ...historyForModel(history, ANSWER_HISTORY_MAX_TURNS, ANSWER_HISTORY_MAX_CHARACTERS),
             { role: "user", content: [`Question:\n${question}`, "Evidence for this turn:", builtContext.context || "(No evidence was retrieved.)"].join("\n\n") }
           ],
-          ...completionRequestOptions(settings)
+          ...completionRequestOptions(settings, actionBudget?.answerOutputTokens)
         }
       };
     }
@@ -440,10 +445,11 @@ export class OpenAICompatibleClient {
     return {
       url: completionUrl(settings.endpoint),
       headers,
+      isGroqGptOss: groqGptOss,
       body: {
         model: settings.model,
         messages,
-        ...completionRequestOptions(settings)
+        ...completionRequestOptions(settings, actionBudget?.answerOutputTokens)
       },
       promptBudget: plan.limitTokens === undefined ? undefined : {
         usedTokens: plan.usedTokens,
@@ -462,10 +468,10 @@ export class OpenAICompatibleClient {
     settings: ModelSettings,
     mode: RetrievalPlanningMode,
     history: readonly ChatTurn[]
-  ): PreparedCompletionRequest {
+  ): PreparedCompletionRequest | null {
     const headers = this.requestHeaders(settings);
-    const providerOptions = completionRequestOptions(settings);
     const groq = isGroqEndpoint(settings.endpoint);
+    const groqGptOss = isGroqGptOssModel(settings);
     const actionBudget = groq
       ? groqActionBudget(
         typeof settings.maximumInputTokens === "number" ? settings.maximumInputTokens : 7_000,
@@ -473,8 +479,9 @@ export class OpenAICompatibleClient {
         settings.groqTotalTokensPerMinute
       )
       : undefined;
+    const providerOptions = completionRequestOptions(settings, actionBudget?.plannerOutputTokens);
     if (actionBudget && actionBudget.plannerInputTokens <= 0) {
-      throw new ModelRequestError("input-too-large");
+      return null;
     }
     const plannerSystem = retrievalPlannerPrompt(mode);
     const plannerQuestion = query.trim();
@@ -488,7 +495,7 @@ export class OpenAICompatibleClient {
       })
       : undefined;
     if (planned?.overBudget) {
-      throw new ModelRequestError("input-too-large");
+      return null;
     }
     const messages = planned
       ? planned.messages.map((message) => message.content === `Question:\n${plannerQuestion}`
@@ -502,12 +509,13 @@ export class OpenAICompatibleClient {
     return {
       url: completionUrl(settings.endpoint),
       headers,
+      isGroqGptOss: groqGptOss,
       body: {
         model: settings.model,
         messages,
         ...providerOptions,
         ...(actionBudget
-          ? { max_tokens: actionBudget.plannerOutputTokens }
+          ? ("max_completion_tokens" in providerOptions ? {} : { max_tokens: actionBudget.plannerOutputTokens })
           : settings.provider === "deepseek"
           ? { max_tokens: mode === "fast" ? 240 : 600 }
           : {})
@@ -570,7 +578,7 @@ export class OpenAICompatibleClient {
     }
     const text = responseText(body.choices);
     if (!text) {
-      throw new ModelRequestError("empty-response");
+      throw new ModelRequestError(request.isGroqGptOss ? "reasoning-exhausted" : "empty-response");
     }
     return text;
   }
@@ -624,7 +632,7 @@ export class OpenAICompatibleClient {
         if (!text) {
           throw body.error?.message
             ? new ModelRequestError("request-failed", body.error.message)
-            : new ModelRequestError("empty-response");
+            : new ModelRequestError(request.isGroqGptOss ? "reasoning-exhausted" : "empty-response");
         }
         options.onResponseMode?.("non-stream", "complete-response");
         options.onDelta?.(text);
@@ -672,6 +680,9 @@ export class OpenAICompatibleClient {
       }
       if (options.signal?.aborted) {
         throw new RequestCancelledError();
+      }
+      if (error instanceof ChatCompletionStreamError && request.isGroqGptOss) {
+        throw new ModelRequestError("reasoning-exhausted");
       }
       if (
         error instanceof SafeNonStreamingFallbackError ||

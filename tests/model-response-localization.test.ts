@@ -8,6 +8,16 @@ import { ModelConfigurationError, ModelRequestError, ModelStreamInterruptedError
 import { localizeModelError, localizeModelResponseDetail } from "../src/ui/model-response-localization";
 
 describe("model response localization", () => {
+  it("does not expose provider detail for a reasoning-exhausted response", () => {
+    const localized = localizeModelError(
+      createTranslator("it"),
+      new ModelRequestError("reasoning-exhausted" as never, "private chain of thought")
+    );
+
+    expect(localized).not.toContain("private chain of thought");
+    expect(localized).not.toContain("api.groq.com");
+  });
+
   it.each([
     ["it", "La risposta ha raggiunto il limite di Token massimi in output e potrebbe essere incompleta."],
     ["en", "The answer reached the Maximum output tokens limit and may be incomplete."],

@@ -23,6 +23,7 @@ export function localizeModelError(t: Translator, error: unknown): string {
     if (error.code === "empty-response") {
       return t("view.model.emptyResponse");
     }
+    if (error.code === "reasoning-exhausted") return t("view.model.reasoningExhausted");
     if (error.code === "input-too-large") return t("view.model.inputTooLarge");
     if (error.code === "rate-limited") return t("view.model.rateLimited");
     return t("view.model.requestFailedSafe");

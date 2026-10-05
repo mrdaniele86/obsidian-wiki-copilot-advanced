@@ -16,6 +16,7 @@ export interface AssistantConversationTurn {
   knowledgeBaseHit?: boolean;
   webSearch?: WebSearchResult;
   pendingClarification?: PendingClarification;
+  citationWarning?: string;
 }
 
 export type ConversationTurn = UserConversationTurn | AssistantConversationTurn;
@@ -25,12 +26,14 @@ export function assistantRenderState(turn: AssistantConversationTurn): {
   knowledgeBaseHit: boolean;
   webSearch?: WebSearchResult;
   pendingClarification?: PendingClarification;
+  citationWarning?: string;
 } {
   return {
     sources: turn.sources ?? [],
     knowledgeBaseHit: turn.knowledgeBaseHit ?? true,
     webSearch: turn.webSearch,
-    pendingClarification: turn.pendingClarification
+    pendingClarification: turn.pendingClarification,
+    citationWarning: turn.citationWarning
   };
 }
 

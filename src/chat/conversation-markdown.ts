@@ -8,6 +8,7 @@ const MAX_WEB_SEARCH_SOURCES = 12;
 const MAX_WEB_SEARCH_SOURCE_TITLE_CHARACTERS = 500;
 const MAX_WEB_SEARCH_SOURCE_URL_CHARACTERS = 2_048;
 const MAX_CLARIFICATION_FIELD_CHARACTERS = 2_000;
+const MAX_CITATION_WARNING_CHARACTERS = 2_000;
 
 function frontmatterValue(value: string): string {
   return JSON.stringify(value);
@@ -47,8 +48,8 @@ function decodeText(value: string): string | null {
 }
 
 function assistantState(turn: ConversationTurn): string {
-  if (turn.role !== "assistant" || (turn.sources === undefined && turn.knowledgeBaseHit === undefined && turn.webSearch === undefined && turn.pendingClarification === undefined)) return "";
-  return encodeText(JSON.stringify({ sources: turn.sources, knowledgeBaseHit: turn.knowledgeBaseHit, webSearch: turn.webSearch, pendingClarification: turn.pendingClarification }));
+  if (turn.role !== "assistant" || (turn.sources === undefined && turn.knowledgeBaseHit === undefined && turn.webSearch === undefined && turn.pendingClarification === undefined && turn.citationWarning === undefined)) return "";
+  return encodeText(JSON.stringify({ sources: turn.sources, knowledgeBaseHit: turn.knowledgeBaseHit, webSearch: turn.webSearch, pendingClarification: turn.pendingClarification, citationWarning: turn.citationWarning }));
 }
 
 function isWebSearchResult(value: unknown, legacyQuestion?: string): value is NonNullable<AssistantConversationTurn["webSearch"]> {
@@ -85,16 +86,16 @@ function isPendingClarification(value: unknown): value is PendingClarification {
     typeof pending.userRepliesSinceRequest === "number" && Number.isInteger(pending.userRepliesSinceRequest) && pending.userRepliesSinceRequest >= 0 && pending.userRepliesSinceRequest <= 2;
 }
 
-function parseAssistantState(value: string, legacyQuestion?: string): Pick<AssistantConversationTurn, "sources" | "knowledgeBaseHit" | "webSearch" | "pendingClarification"> | null {
+function parseAssistantState(value: string, legacyQuestion?: string): Pick<AssistantConversationTurn, "sources" | "knowledgeBaseHit" | "webSearch" | "pendingClarification" | "citationWarning"> | null {
   const decoded = decodeText(value);
   if (decoded === null) return null;
   try {
     const state: unknown = JSON.parse(decoded);
     if (!state || typeof state !== "object") return null;
-    const { sources, knowledgeBaseHit, webSearch, pendingClarification } = state as { sources?: unknown; knowledgeBaseHit?: unknown; webSearch?: unknown; pendingClarification?: unknown };
+    const { sources, knowledgeBaseHit, webSearch, pendingClarification, citationWarning } = state as { sources?: unknown; knowledgeBaseHit?: unknown; webSearch?: unknown; pendingClarification?: unknown; citationWarning?: unknown };
     if (sources !== undefined && !Array.isArray(sources)) return null;
     if (knowledgeBaseHit !== undefined && typeof knowledgeBaseHit !== "boolean") return null;
-    return { sources: sources as AssistantConversationTurn["sources"], knowledgeBaseHit, ...(isWebSearchResult(webSearch, legacyQuestion) ? { webSearch } : {}), ...(isPendingClarification(pendingClarification) ? { pendingClarification } : {}) };
+    return { sources: sources as AssistantConversationTurn["sources"], knowledgeBaseHit, ...(isWebSearchResult(webSearch, legacyQuestion) ? { webSearch } : {}), ...(isPendingClarification(pendingClarification) ? { pendingClarification } : {}), ...(isBoundedNonEmptyString(citationWarning, MAX_CITATION_WARNING_CHARACTERS) ? { citationWarning } : {}) };
   } catch {
     return null;
   }

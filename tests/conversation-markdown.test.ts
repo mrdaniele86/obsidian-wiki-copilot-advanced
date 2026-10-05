@@ -97,6 +97,21 @@ describe("conversation Markdown", () => {
     expect(parseConversation(serializeConversation(clarificationConversation))).toEqual(clarificationConversation);
   });
 
+  it("round-trips an assistant citation warning without changing its answer or sources", () => {
+    const warningConversation: Conversation = {
+      ...conversation,
+      turns: [{ role: "user", content: "Question" }, {
+        role: "assistant",
+        content: "Uncited answer.",
+        sources: conversation.turns[1]?.role === "assistant" ? conversation.turns[1].sources : [],
+        knowledgeBaseHit: false,
+        citationWarning: "The response contains no valid source references; use the source list."
+      }]
+    };
+
+    expect(parseConversation(serializeConversation(warningConversation))).toEqual(warningConversation);
+  });
+
   it.each([
     ["an empty goal", { goal: "" }],
     ["an overlong question", { question: "q".repeat(2_001) }],

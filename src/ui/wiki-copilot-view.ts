@@ -627,7 +627,7 @@ export class WikiCopilotView extends ItemView {
       if (turn.role === "user") this.appendUserMessage(turn.content);
       else {
         const state = assistantRenderState(turn);
-        void this.appendAssistantMessage(turn.content, state.sources, state.knowledgeBaseHit, state.webSearch);
+        void this.appendAssistantMessage(turn.content, state.sources, state.knowledgeBaseHit, state.webSearch, state.citationWarning);
       }
     }
     this.queryEl.value = "";
@@ -945,6 +945,7 @@ export class WikiCopilotView extends ItemView {
         content: answer.markdown,
         sources: answer.sources,
         knowledgeBaseHit: answer.knowledgeBaseHit,
+        ...(answer.citationWarning ? { citationWarning: answer.citationWarning } : {}),
         ...(fallbackClarification ? { pendingClarification: fallbackClarification } : {})
       });
       this.conversation.updatedAt = now;

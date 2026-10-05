@@ -531,7 +531,7 @@ export default class WikiCopilotPlugin extends Plugin {
     const missingExactIdentifier = knowledgeBaseHit
       ? null
       : exactIdentifierMissingMessage(retrieval.query);
-    if (missingExactIdentifier) {
+    if (missingExactIdentifier && modelHistory.length === 0) {
       options.onProgress?.(this.t("main.progress.missingIdentifier"));
       return {
         markdown: missingExactIdentifier,

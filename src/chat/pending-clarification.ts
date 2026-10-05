@@ -2,6 +2,7 @@ const DIRECTIVE_PREFIX = "<!-- wiki-copilot-clarification ";
 const MAX_FIELD_CHARACTERS = 2_000;
 const MAX_RAW_DIRECTIVE_UTF16_CHARACTERS = 50_000;
 const QUESTION_PUNCTUATION = /[?？¿؟]/u;
+const PLAIN_TEXT_CLARIFICATION = /(?:\?|？|\b(?:indica|specifica|fornisci|dimmi|tell me|provide|list)\b)/iu;
 
 export interface ClarificationDirective {
   goal: string;
@@ -112,6 +113,26 @@ function validPendingClarification(pending: PendingClarification): boolean {
 export function resolvePendingClarification(pending: PendingClarification, reply: string): ResolvedClarification | null {
   if (!validPendingClarification(pending) || reply.trim().length === 0 || QUESTION_PUNCTUATION.test(reply)) return null;
   return { ...pending, reply };
+}
+
+export function fallbackPendingClarification(
+  goal: string,
+  assistantQuestion: string,
+  originUserTurnIndex: number,
+  originAssistantTurnIndex: number
+): PendingClarification | undefined {
+  const trimmedGoal = goal.trim();
+  const trimmedQuestion = assistantQuestion.trim();
+  if (!boundedText(trimmedGoal) || !boundedText(trimmedQuestion) || !PLAIN_TEXT_CLARIFICATION.test(trimmedQuestion)) return undefined;
+  return {
+    goal: trimmedGoal,
+    question: trimmedQuestion,
+    missing: "details requested by the immediately preceding assistant message",
+    requiresSummary: true,
+    originUserTurnIndex,
+    originAssistantTurnIndex,
+    userRepliesSinceRequest: 0
+  };
 }
 
 export function formatClarificationContinuation(resolution: ResolvedClarification): string {

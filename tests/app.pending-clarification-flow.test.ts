@@ -56,6 +56,29 @@ function viewFor(answer: ReturnType<typeof vi.fn>): ViewHarness {
 }
 
 describe("pending clarification in the chat view", () => {
+  it("keeps a plain-text immediate clarification anchored when the model omits its hidden directive", async () => {
+    const answer = vi.fn()
+      .mockResolvedValueOnce({
+        markdown: "Indica gli ultimi due allenamenti in ordine cronologico:\n1. penultimo\n2. ultimo.",
+        sources: [],
+        knowledgeBaseHit: true
+      })
+      .mockResolvedValueOnce({ markdown: "Ho identificato: 8x300, poi Tempo.", sources: [], knowledgeBaseHit: true });
+    const view = viewFor(answer);
+
+    await (view.runQuestion as (question: string, history: unknown[], options: { appendUserMessage: boolean }) => Promise<void>)(
+      "Oggi ho fatto un allenamento a tempo, che allenamento devo fare successivo?", [], { appendUserMessage: true }
+    );
+    (view.queryEl as { value: string }).value = "Penultimo 8x300, ultimo tempo";
+    await (view.ask as () => Promise<void>)();
+
+    expect(answer).toHaveBeenLastCalledWith(
+      "Penultimo 8x300, ultimo tempo",
+      expect.any(Array),
+      expect.objectContaining({ clarification: expect.objectContaining({ reply: "Penultimo 8x300, ultimo tempo" }) })
+    );
+  });
+
   it("persists a model clarification then sends the raw Soglia reply with anchored clarification metadata", async () => {
     const answer = vi.fn()
       .mockResolvedValueOnce({

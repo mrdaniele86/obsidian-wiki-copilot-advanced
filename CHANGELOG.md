@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `2.1.1-beta.11`: Preserve an immediate plain-text clarification as a one-turn local fallback when a provider omits the hidden clarification directive.
+
 - `2.1.1-beta.10`: Add configurable input/output token budgets, conservative Groq request sizing, optional recent conversation context, localized provider-safe errors, and manual reduced-context recovery.
 
 - `2.1.1-beta.3`: Add fuzzy conversation search, preserve chat while opening citations, and refine mobile composer/history interactions.

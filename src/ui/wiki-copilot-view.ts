@@ -27,6 +27,7 @@ import type { ChatTurn } from "../core/types";
 import { assistantRenderState } from "../chat/conversation-types";
 import type { Conversation, ConversationTurn, StoredConversation } from "../chat/conversation-types";
 import {
+  fallbackPendingClarification,
   resolvePendingClarification,
   type ResolvedClarification
 } from "../chat/pending-clarification";
@@ -897,10 +898,16 @@ export class WikiCopilotView extends ItemView {
           answer.knowledgeBaseHit
         );
       }
+      const fallbackClarification = answer.pendingClarification ?? fallbackPendingClarification(
+        question,
+        answer.markdown,
+        this.turns.length - 1,
+        this.turns.length
+      );
       this.turns.push({
         role: "assistant",
         content: answer.markdown,
-        ...(answer.pendingClarification ? { pendingClarification: answer.pendingClarification } : {})
+        ...(fallbackClarification ? { pendingClarification: fallbackClarification } : {})
       });
       if (options.clarification) {
         this.clearPendingClarification(options.clarification.originAssistantTurnIndex);
@@ -919,7 +926,7 @@ export class WikiCopilotView extends ItemView {
         content: answer.markdown,
         sources: answer.sources,
         knowledgeBaseHit: answer.knowledgeBaseHit,
-        ...(answer.pendingClarification ? { pendingClarification: answer.pendingClarification } : {})
+        ...(fallbackClarification ? { pendingClarification: fallbackClarification } : {})
       });
       this.conversation.updatedAt = now;
       await this.saveConversation();

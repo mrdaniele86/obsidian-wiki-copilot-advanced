@@ -56,6 +56,34 @@ function viewFor(answer: ReturnType<typeof vi.fn>): ViewHarness {
 }
 
 describe("pending clarification in the chat view", () => {
+  it("reclassifies a streamed retrieved answer without citations as a general answer when it finishes", async () => {
+    const answer = vi.fn(async (_question: string, _history: unknown[], options: {
+      onRetrieved?: (sources: unknown[], hit: boolean, metrics: unknown) => void;
+      onDelta?: (delta: string) => void;
+    }) => {
+      options.onRetrieved?.([{ id: "S1" }], true, {});
+      options.onDelta?.("Use recovery tomorrow.");
+      return {
+        markdown: "Use recovery tomorrow.",
+        sources: [{ id: "S1" }],
+        knowledgeBaseHit: false,
+        citationWarning: "No valid source reference."
+      };
+    });
+    const view = viewFor(answer);
+    const streamingMessage = { update: vi.fn(), finish: vi.fn().mockResolvedValue(undefined) };
+    view.appendStreamingAssistantMessage = vi.fn(() => streamingMessage);
+
+    await (view.runQuestion as (question: string, history: unknown[], options: { appendUserMessage: boolean }) => Promise<void>)(
+      "What next?", [], { appendUserMessage: true }
+    );
+
+    expect(view.appendStreamingAssistantMessage).toHaveBeenCalledWith(true);
+    expect(streamingMessage.finish).toHaveBeenCalledWith(
+      "Use recovery tomorrow.", [{ id: "S1" }], false, undefined, "No valid source reference."
+    );
+  });
+
   it("continues a visible immediate Italian clarification when its metadata is absent", async () => {
     const answer = vi.fn().mockResolvedValue({ markdown: "Ho identificato: 8x300, poi Tempo.", sources: [], knowledgeBaseHit: true });
     const view = viewFor(answer);

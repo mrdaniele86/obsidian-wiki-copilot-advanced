@@ -58,7 +58,7 @@ export function webSearchButtonState(mode: WebSearchMode, busy: boolean): { hidd
 
 interface AssistantMessageHandle {
   update(markdown: string): void;
-  finish(markdown: string, sources: SourceReference[], webSearch?: WebSearchResult, citationWarning?: string): Promise<void>;
+  finish(markdown: string, sources: SourceReference[], knowledgeBaseHit: boolean, webSearch?: WebSearchResult, citationWarning?: string): Promise<void>;
   interrupt(markdown: string, sources: SourceReference[], message: string): Promise<void>;
 }
 
@@ -906,7 +906,7 @@ export class WikiCopilotView extends ItemView {
       }
       waitingForFirstContent = false;
       if (streamState.message) {
-        await streamState.message.finish(answer.markdown, answer.sources, undefined, answer.citationWarning);
+        await streamState.message.finish(answer.markdown, answer.sources, answer.knowledgeBaseHit, undefined, answer.citationWarning);
       } else {
         loading.remove();
         await this.appendAssistantMessage(
@@ -1053,7 +1053,7 @@ export class WikiCopilotView extends ItemView {
     citationWarning?: string
   ): Promise<void> {
     const message = this.appendStreamingAssistantMessage(knowledgeBaseHit);
-    await message.finish(markdown, sources, webSearch, citationWarning);
+    await message.finish(markdown, sources, knowledgeBaseHit, webSearch, citationWarning);
   }
 
   private appendStreamingAssistantMessage(knowledgeBaseHit: boolean): AssistantMessageHandle {
@@ -1089,12 +1089,19 @@ export class WikiCopilotView extends ItemView {
           renderer.update(streamedMarkdown);
         }
       },
-      finish: async (finalMarkdown, finalSources, webSearch, citationWarning) => {
+      finish: async (finalMarkdown, finalSources, finalKnowledgeBaseHit, webSearch, citationWarning) => {
         if (finalized) {
           return;
         }
         finalized = true;
         message.removeClass("is-streaming");
+        if (!finalKnowledgeBaseHit && !label.querySelector(".wiki-copilot-general-answer-badge")) {
+          label.createSpan({
+            cls: "wiki-copilot-general-answer-badge",
+            text: this.plugin.t("view.generalAnswer"),
+            attr: { title: this.plugin.t("view.generalAnswerTitle") }
+          });
+        }
         await renderer.finalize(linkifyAnswerCitations(finalMarkdown, finalSources));
         const keepPinned = this.isNearBottom();
         this.registerCitationLinks(body, finalSources);

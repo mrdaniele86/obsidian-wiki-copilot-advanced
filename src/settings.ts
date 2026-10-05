@@ -27,11 +27,23 @@ export const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
   includeRecentChatContext: false
 };
 
+export type TokenLimitSetting = "automatic" | number;
+
+function tokenLimit(value: unknown): TokenLimitSetting {
+  if (value === "automatic") return value;
+  return typeof value === "number" && Number.isInteger(value) && value >= 256 && value <= 32_000
+    ? value
+    : "automatic";
+}
+
 export interface ModelSettings {
   provider: ModelProvider;
   serviceName: string;
   endpoint: string;
   model: string;
+  includeRecentConversationContext?: boolean;
+  maximumInputTokens?: TokenLimitSetting;
+  maximumOutputTokens?: TokenLimitSetting;
 }
 
 export interface WikiCopilotSettings {
@@ -71,7 +83,10 @@ export const DEFAULT_SETTINGS: WikiCopilotSettings = {
     provider: "custom",
     serviceName: "",
     endpoint: "",
-    model: ""
+    model: "",
+    includeRecentConversationContext: false,
+    maximumInputTokens: "automatic",
+    maximumOutputTokens: "automatic"
   },
   webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS }
 };
@@ -153,7 +168,10 @@ export function loadWikiCopilotSettings(data: unknown): WikiCopilotSettings {
       provider,
       serviceName: savedServiceName,
       endpoint: providerEndpoint(provider, savedEndpoint),
-      model: savedModel || defaultModelForProvider(provider)
+      model: savedModel || defaultModelForProvider(provider),
+      includeRecentConversationContext: rawModel.includeRecentConversationContext === true,
+      maximumInputTokens: tokenLimit(rawModel.maximumInputTokens),
+      maximumOutputTokens: tokenLimit(rawModel.maximumOutputTokens)
     },
     webSearch: {
       mode: webSearchMode,
@@ -182,6 +200,9 @@ type WikiCopilotSettingKey =
   | "serviceName"
   | "endpoint"
   | "model"
+  | "includeRecentConversationContext"
+  | "maximumInputTokens"
+  | "maximumOutputTokens"
   | "retrievalMode"
   | "webSearchMode"
   | "webSearchGeminiModel"
@@ -304,6 +325,21 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
                     });
                 });
             }
+          },
+          {
+            name: t("settings.model.includeRecentConversationContext.name"),
+            desc: t("settings.model.includeRecentConversationContext.desc"),
+            control: { type: "toggle", key: "includeRecentConversationContext" }
+          },
+          {
+            name: t("settings.model.maximumInputTokens.name"),
+            desc: t("settings.model.maximumInputTokens.desc"),
+            control: { type: "text", key: "maximumInputTokens", placeholder: t("settings.model.tokenLimit.placeholder") }
+          },
+          {
+            name: t("settings.model.maximumOutputTokens.name"),
+            desc: t("settings.model.maximumOutputTokens.desc"),
+            control: { type: "text", key: "maximumOutputTokens", placeholder: t("settings.model.tokenLimit.placeholder") }
           }
         ]
       },
@@ -387,6 +423,12 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
         return this.plugin.settings.model.endpoint;
       case "model":
         return this.plugin.settings.model.model;
+      case "includeRecentConversationContext":
+        return this.plugin.settings.model.includeRecentConversationContext ?? false;
+      case "maximumInputTokens":
+        return String(this.plugin.settings.model.maximumInputTokens ?? "automatic");
+      case "maximumOutputTokens":
+        return String(this.plugin.settings.model.maximumOutputTokens ?? "automatic");
       case "retrievalMode":
         return this.plugin.settings.retrievalMode;
       case "webSearchMode":
@@ -433,6 +475,24 @@ export class WikiCopilotSettingTab extends PluginSettingTab {
           this.plugin.settings.model.model = value.trim();
         }
         break;
+      case "includeRecentConversationContext":
+        if (typeof value !== "boolean") return;
+        this.plugin.settings.model.includeRecentConversationContext = value;
+        break;
+      case "maximumInputTokens": {
+        const normalized = typeof value === "string" && /^automatic$/iu.test(value.trim())
+          ? "automatic"
+          : tokenLimit(Number(value));
+        this.plugin.settings.model.maximumInputTokens = normalized;
+        break;
+      }
+      case "maximumOutputTokens": {
+        const normalized = typeof value === "string" && /^automatic$/iu.test(value.trim())
+          ? "automatic"
+          : tokenLimit(Number(value));
+        this.plugin.settings.model.maximumOutputTokens = normalized;
+        break;
+      }
       case "retrievalMode":
         if (!isRetrievalMode(value)) {
           return;

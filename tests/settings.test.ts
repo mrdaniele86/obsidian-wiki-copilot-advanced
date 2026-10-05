@@ -85,7 +85,10 @@ describe("retrieval mode settings", () => {
       provider: "custom",
       serviceName: "",
       endpoint: "",
-      model: ""
+      model: "",
+      includeRecentConversationContext: false,
+      maximumInputTokens: "automatic",
+      maximumOutputTokens: "automatic"
     });
     expect(DEFAULT_SETTINGS.model).toEqual(settings.model);
   });
@@ -168,6 +171,23 @@ describe("retrieval mode settings", () => {
 });
 
 describe("model response mode settings", () => {
+  it("defaults chat context off and restores valid model token limits", () => {
+    expect(loadWikiCopilotSettings(undefined).model).toMatchObject({
+      includeRecentConversationContext: false,
+      maximumInputTokens: "automatic",
+      maximumOutputTokens: "automatic"
+    });
+    expect(loadWikiCopilotSettings({ model: {
+      maximumInputTokens: 8_000,
+      maximumOutputTokens: 1_024,
+      includeRecentConversationContext: true
+    } }).model).toMatchObject({
+      includeRecentConversationContext: true,
+      maximumInputTokens: 8_000,
+      maximumOutputTokens: 1_024
+    });
+  });
+
   it("does not expose a response-mode choice in settings", () => {
     const plugin = {
       settings: loadWikiCopilotSettings(undefined),

@@ -23,7 +23,9 @@ export function localizeModelError(t: Translator, error: unknown): string {
     if (error.code === "empty-response") {
       return t("view.model.emptyResponse");
     }
-    return t("view.model.requestFailed", { detail: error.detail ?? "" });
+    if (error.code === "input-too-large") return t("view.model.inputTooLarge");
+    if (error.code === "rate-limited") return t("view.model.rateLimited");
+    return t("view.model.requestFailedSafe");
   }
   if (error instanceof ModelConfigurationError) {
     const keys: Readonly<Record<ModelConfigurationError["code"], TranslationKey>> = {

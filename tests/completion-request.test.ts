@@ -13,4 +13,15 @@ describe("completion request options", () => {
     expect(completionRequestOptions({ provider: "openai" })).toEqual({});
     expect(completionRequestOptions({ provider: "custom" })).toEqual({});
   });
+
+  it("sets a conservative output limit only for the exact Groq API host", () => {
+    expect(completionRequestOptions({
+      provider: "custom",
+      endpoint: "https://API.GROQ.COM/openai/v1/"
+    })).toEqual({ max_tokens: 512 });
+    expect(completionRequestOptions({
+      provider: "custom",
+      endpoint: "https://api.groq.com.example.com/v1"
+    })).toEqual({});
+  });
 });

@@ -409,7 +409,7 @@ describe("OpenAICompatibleClient streaming", () => {
 
     await expect(client.answer("question", context, [], "", settings(), 90_000))
       .rejects.toMatchObject({
-        code: "request-failed",
+        code: "rate-limited",
         detail: "rate limit exceeded"
       });
   });

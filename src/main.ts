@@ -72,6 +72,8 @@ export const WEB_SEARCH_API_KEY_ID = "wiki-copilot-advanced-web-search-api-key";
 export interface AnswerOptions {
   signal?: AbortSignal;
   responseMode?: ModelResponseMode;
+  reducedContext?: boolean;
+  onPromptBudget?: (budget: { usedTokens: number; limitTokens: number }) => void;
   onProgress?: (message: string) => void;
   onDelta?: (delta: string) => void;
   onRetrieved?: (
@@ -510,9 +512,10 @@ export default class WikiCopilotPlugin extends Plugin {
       throw new RequestCancelledError();
     }
     const effectiveQuestion = effectiveQuestionForAnswer(question, history, options.clarification);
+    const modelHistory = options.reducedContext ? [] : this.settings.model.includeRecentConversationContext === true ? history : [];
     const retrieval = await this.retrieve(
       effectiveQuestion,
-      history,
+      modelHistory,
       options.onProgress,
       options.signal
     );
@@ -553,13 +556,15 @@ export default class WikiCopilotPlugin extends Plugin {
       rawMarkdown = await this.llmClient.answer(
         effectiveQuestion,
         context,
-        history,
+        modelHistory,
         this.indexCoordinator.queryGuidance,
         this.settings.model,
         timeoutMilliseconds,
         {
           signal: options.signal,
           responseMode: options.responseMode,
+          reducedContext: options.reducedContext,
+          onPromptBudget: options.onPromptBudget,
           onDelta: options.onDelta,
           onActivity: options.onModelActivity,
           onWarning: (warning) => {

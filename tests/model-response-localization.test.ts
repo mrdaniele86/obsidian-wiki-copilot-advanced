@@ -18,9 +18,9 @@ describe("model response localization", () => {
   });
 
   it.each([
-    ["it", "Richiesta al modello non riuscita: rate limit exceeded"],
-    ["en", "Model request failed: rate limit exceeded"],
-    ["zh", "模型请求失败：rate limit exceeded"]
+    ["it", "Impossibile completare la richiesta al modello."],
+    ["en", "The model request could not be completed."],
+    ["zh", "无法完成模型请求。"]
   ] as const)("localizes a request error for %s", (language, expected) => {
     expect(localizeModelError(createTranslator(language), new ModelRequestError("request-failed", "rate limit exceeded")))
       .toBe(expected);

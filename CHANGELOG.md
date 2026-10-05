@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `2.1.1-beta.10`: Add configurable input/output token budgets, conservative Groq request sizing, optional recent conversation context, localized provider-safe errors, and manual reduced-context recovery.
+
 - `2.1.1-beta.3`: Add fuzzy conversation search, preserve chat while opening citations, and refine mobile composer/history interactions.
 - `2.1.1-beta.2`: Improve mobile history controls, composer safe-area layout, and fresh-install model settings.
 - Prepare the Wiki Copilot Advanced fork for the `2.1.1-beta.1` BRAT beta release.

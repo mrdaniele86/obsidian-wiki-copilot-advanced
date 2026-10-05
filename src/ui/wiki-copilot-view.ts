@@ -19,6 +19,7 @@ import { yieldToUi } from "../core/cooperative";
 import { sourceReferencesFromRetrieval } from "../core/context-builder";
 import type { RetrievalResult, SourceReference } from "../core/types";
 import {
+  ModelRequestError,
   StreamFallbackRequiredError
 } from "../llm/openai-compatible";
 import { localizeModelError } from "./model-response-localization";
@@ -64,6 +65,7 @@ interface RunQuestionOptions {
   appendUserMessage: boolean;
   responseMode?: ModelResponseMode;
   clarification?: ResolvedClarification;
+  reducedContext?: boolean;
 }
 
 export class WikiCopilotView extends ItemView {
@@ -828,7 +830,14 @@ export class WikiCopilotView extends ItemView {
         signal: requestController.signal,
         responseMode: options.responseMode,
         clarification: options.clarification,
+        reducedContext: options.reducedContext,
         onProgress: updateProgress,
+        onPromptBudget: (budget) => {
+          updateProgress(this.plugin.t("view.promptBudget", {
+            used: budget.usedTokens,
+            limit: budget.limitTokens
+          }));
+        },
         onRetrieved: (retrievedSources, hit) => {
           if (sequence === this.requestSequence) {
             sources = retrievedSources;
@@ -944,6 +953,19 @@ export class WikiCopilotView extends ItemView {
               message: localizeModelError(this.plugin.t.bind(this.plugin), error)
             })
           );
+        } else if (error instanceof ModelRequestError && error.code === "input-too-large") {
+          let errorContainer: HTMLElement | null = null;
+          errorContainer = this.appendError(error, {
+            label: this.plugin.t("view.retryReducedContext"),
+            action: () => {
+              errorContainer?.remove();
+              void this.runQuestion(question, history, {
+                appendUserMessage: false,
+                clarification: options.clarification,
+                reducedContext: true
+              });
+            }
+          });
         } else if (error instanceof StreamFallbackRequiredError) {
           let errorContainer: HTMLElement | null = null;
           errorContainer = this.appendError(error, {

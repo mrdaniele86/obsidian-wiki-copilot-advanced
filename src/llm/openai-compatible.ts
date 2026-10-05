@@ -13,6 +13,7 @@ import {
   readChatCompletionStream
 } from "./chat-completion-stream";
 import { completionRequestOptions } from "./completion-request";
+import { isGroqEndpoint, planPromptBudget } from "./prompt-budget";
 import { buildSystemPrompt } from "./prompt";
 import { RequestCancelledError, RequestTimeoutError } from "./request-timeout";
 import { parseRetrievalQueries } from "../core/retrieval-plan";
@@ -34,7 +35,7 @@ export type ModelResponseMode = "auto" | "stream" | "non-stream";
 export type CompletionActivity = "response-headers" | "stream-data";
 export type ModelResponseDetail = "streaming-unavailable" | "streaming-unsupported" | "complete-response";
 export type StreamFallbackReason = "streaming-unavailable" | "response-not-streamable" | "stream-connection-failed";
-export type ModelRequestErrorCode = "request-failed" | "empty-response";
+export type ModelRequestErrorCode = "request-failed" | "input-too-large" | "rate-limited" | "empty-response";
 export type ModelConfigurationErrorCode = "invalid-endpoint" | "missing-service-name" | "missing-endpoint-or-model" | "missing-api-key";
 export type ModelCompletionWarning = "length" | "content-filter";
 export type ModelStreamInterruptionReason = "insufficient-system-resource" | "stream-interrupted";
@@ -47,6 +48,8 @@ export interface CompletionAnswerOptions {
   onActivity?: (activity: CompletionActivity) => void;
   onWarning?: (warning: ModelCompletionWarning) => void;
   onClarification?: (clarification: ClarificationDirective) => void;
+  reducedContext?: boolean;
+  onPromptBudget?: (budget: { usedTokens: number; limitTokens: number }) => void;
 }
 
 export interface RetrievalPlanningOptions {
@@ -116,6 +119,7 @@ interface PreparedCompletionRequest {
   url: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
+  promptBudget?: { usedTokens: number; limitTokens: number };
 }
 
 const ANSWER_HISTORY_MAX_TURNS = 10;
@@ -187,6 +191,14 @@ function parseJsonResponse(text: string): ChatCompletionResponse {
 function responseErrorDetail(text: string, status: number): string {
   const body = parseJsonResponse(text);
   return body.error?.message?.trim() || text.slice(0, 500).trim() || `HTTP ${status}`;
+}
+
+function requestErrorCode(status: number, detail: string): ModelRequestErrorCode {
+  if (status === 413) return "input-too-large";
+  const sizeSignal = /\b(?:tpm|tokens? per minute|requested\s+\d+.*limit|context length|too many tokens?)\b/iu.test(detail);
+  if ((status === 400 || status === 429) && sizeSignal) return "input-too-large";
+  if (status === 429) return "rate-limited";
+  return "request-failed";
 }
 
 function historyForModel(
@@ -298,7 +310,8 @@ export class OpenAICompatibleClient {
     timeoutMilliseconds: number,
     options: CompletionAnswerOptions = {}
   ): Promise<string> {
-    const request = this.prepareRequest(question, builtContext, history, schemaGuidance, settings);
+    const request = this.prepareRequest(question, builtContext, history, schemaGuidance, settings, options.reducedContext === true);
+    if (request.promptBudget) options.onPromptBudget?.(request.promptBudget);
     const responseMode = options.responseMode ?? "auto";
     if (responseMode === "non-stream") {
       options.onResponseMode?.("non-stream");
@@ -361,27 +374,54 @@ export class OpenAICompatibleClient {
     builtContext: BuiltContext,
     history: readonly ChatTurn[],
     schemaGuidance: string,
-    settings: ModelSettings
+    settings: ModelSettings,
+    reducedContext: boolean
   ): PreparedCompletionRequest {
     const headers = this.requestHeaders(settings);
 
+    const configuredLimit = typeof settings.maximumInputTokens === "number"
+      ? settings.maximumInputTokens
+      : isGroqEndpoint(settings.endpoint) ? 7_000 : undefined;
+    const requestedLimit = reducedContext ? Math.min(configuredLimit ?? 2_000, 2_000) : configuredLimit;
+    if (requestedLimit === undefined) {
+      return {
+        url: completionUrl(settings.endpoint),
+        headers,
+        body: {
+          model: settings.model,
+          messages: [
+            { role: "system", content: `${buildSystemPrompt(schemaGuidance, builtContext.sources.length > 0)}\n\n${CLARIFICATION_DIRECTIVE_INSTRUCTION}` },
+            ...historyForModel(history, ANSWER_HISTORY_MAX_TURNS, ANSWER_HISTORY_MAX_CHARACTERS),
+            { role: "user", content: [`Question:\n${question}`, "Evidence for this turn:", builtContext.context || "(No evidence was retrieved.)"].join("\n\n") }
+          ],
+          ...completionRequestOptions(settings)
+        }
+      };
+    }
+    const evidence = builtContext.context.match(/<wiki-copilot-source\b[\s\S]*?<\/wiki-copilot-source>/giu)
+      ?? (builtContext.context ? [builtContext.context] : ["(No evidence was retrieved.)"]);
+    const plan = planPromptBudget({
+      systemPrompt: `${buildSystemPrompt(schemaGuidance, builtContext.sources.length > 0)}\n\n${CLARIFICATION_DIRECTIVE_INSTRUCTION}`,
+      question,
+      history: reducedContext ? [] : historyForModel(history, ANSWER_HISTORY_MAX_TURNS, ANSWER_HISTORY_MAX_CHARACTERS),
+      evidence,
+      limitTokens: requestedLimit
+    });
+    if (plan.overBudget) {
+      throw new ModelRequestError("input-too-large");
+    }
+    const system = plan.messages[0]!;
+    const plannedEvidence = plan.messages.slice(1).filter((message) =>
+      message.content.startsWith("<wiki-copilot-source") || message.content === "(No evidence was retrieved.)" || evidence.includes(message.content)
+    );
+    const plannedHistory = plan.messages.slice(1).filter((message) => !plannedEvidence.includes(message) && message.content !== `Question:\n${question}`);
+    const user = plan.messages.find((message) => message.content === `Question:\n${question}`)!;
     const messages = [
+      system,
+      ...plannedHistory,
       {
-        role: "system",
-        content: `${buildSystemPrompt(schemaGuidance, builtContext.sources.length > 0)}\n\n${CLARIFICATION_DIRECTIVE_INSTRUCTION}`
-      },
-      ...historyForModel(
-        history,
-        ANSWER_HISTORY_MAX_TURNS,
-        ANSWER_HISTORY_MAX_CHARACTERS
-      ),
-      {
-        role: "user",
-        content: [
-          `Question:\n${question}`,
-          "Evidence for this turn:",
-          builtContext.context || "(No evidence was retrieved.)"
-        ].filter((part): part is string => Boolean(part)).join("\n\n")
+        role: "user" as const,
+        content: [user.content, "Evidence for this turn:", ...plannedEvidence.map((message) => message.content)].join("\n\n")
       }
     ];
 
@@ -392,6 +432,10 @@ export class OpenAICompatibleClient {
         model: settings.model,
         messages,
         ...completionRequestOptions(settings)
+      },
+      promptBudget: plan.limitTokens === undefined ? undefined : {
+        usedTokens: plan.usedTokens,
+        limitTokens: plan.limitTokens
       }
     };
   }
@@ -477,7 +521,7 @@ export class OpenAICompatibleClient {
     }
     if (response.status < 200 || response.status >= 300) {
       const detail = body.error?.message || response.text.slice(0, 500) || `HTTP ${response.status}`;
-      throw new ModelRequestError("request-failed", detail);
+      throw new ModelRequestError(requestErrorCode(response.status, detail), detail);
     }
     const text = responseText(body.choices);
     if (!text) {
@@ -525,7 +569,7 @@ export class OpenAICompatibleClient {
         if (streamUnsupported(response.status, detail)) {
           throw new SafeNonStreamingFallbackError("streaming-unsupported");
         }
-        throw new ModelRequestError("request-failed", detail);
+        throw new ModelRequestError(requestErrorCode(response.status, detail), detail);
       }
 
       if (contentType.includes("application/json")) {

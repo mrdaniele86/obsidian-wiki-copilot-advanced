@@ -9,6 +9,7 @@ export interface PromptBudgetInput {
   history?: readonly PromptMessage[];
   evidence?: readonly string[];
   limitTokens?: number;
+  budgetAlreadySafe?: boolean;
 }
 
 export interface PromptBudgetPlan {
@@ -21,6 +22,38 @@ export interface PromptBudgetPlan {
 const SAFETY_MARGIN = 0.12;
 const MESSAGE_OVERHEAD_TOKENS = 8;
 const AUTOMATIC_GROQ_TPM = 8_000;
+const GROQ_PLANNER_OUTPUT_TOKENS = 256;
+const GROQ_PLANNER_INPUT_TOKENS = 2_000;
+
+export interface GroqActionBudget {
+  totalTpm: number;
+  plannerInputTokens: number;
+  plannerOutputTokens: number;
+  answerInputTokens: number;
+  answerOutputTokens: number;
+}
+
+export function groqActionBudget(
+  inputLimit: number | undefined,
+  outputLimit: number | undefined,
+  totalTpm: number | "automatic" | undefined
+): GroqActionBudget {
+  const accountLimit = typeof totalTpm === "number" ? totalTpm : AUTOMATIC_GROQ_TPM;
+  const answerOutputTokens = outputLimit ?? 512;
+  const inputBeforeMargin = Math.max(0, Math.min(
+    inputLimit ?? 7_000,
+    accountLimit - GROQ_PLANNER_OUTPUT_TOKENS - answerOutputTokens
+ ));
+  const safeInputTokens = Math.floor(inputBeforeMargin * (1 - SAFETY_MARGIN));
+  const plannerInputTokens = Math.min(GROQ_PLANNER_INPUT_TOKENS, safeInputTokens);
+  return {
+    totalTpm: accountLimit,
+    plannerInputTokens,
+    plannerOutputTokens: GROQ_PLANNER_OUTPUT_TOKENS,
+    answerInputTokens: safeInputTokens - plannerInputTokens,
+    answerOutputTokens
+  };
+}
 
 export function groqPromptLimit(
   inputLimit: number | undefined,
@@ -67,9 +100,9 @@ export function estimatePromptTokens(messages: readonly PromptMessage[]): number
   return 3 + messages.reduce((total, message) => total + messageTokens(message), 0);
 }
 
-function safeBudget(limitTokens: number | undefined): number | undefined {
+function safeBudget(limitTokens: number | undefined, alreadySafe = false): number | undefined {
   if (!Number.isFinite(limitTokens) || !limitTokens || limitTokens <= 0) return undefined;
-  return Math.floor(limitTokens * (1 - SAFETY_MARGIN));
+  return alreadySafe ? Math.floor(limitTokens) : Math.floor(limitTokens * (1 - SAFETY_MARGIN));
 }
 
 function evidenceWithinBudget(
@@ -112,7 +145,7 @@ function evidenceWithinBudget(
 
 export function planPromptBudget(input: PromptBudgetInput): PromptBudgetPlan {
   const limitTokens = input.limitTokens;
-  const budget = safeBudget(limitTokens);
+  const budget = safeBudget(limitTokens, input.budgetAlreadySafe);
   const systemMessage: PromptMessage = { role: "system", content: input.systemPrompt };
   const questionMessage: PromptMessage = { role: "user", content: `Question:\n${input.question}` };
   const selectedEvidence: string[] = [];

@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { estimatePromptTokens, groqPromptLimit, isGroqEndpoint, planPromptBudget } from "../src/llm/prompt-budget";
+import { estimatePromptTokens, groqActionBudget, groqPromptLimit, isGroqEndpoint, planPromptBudget } from "../src/llm/prompt-budget";
 
 describe("prompt budget", () => {
   it("reserves Groq output tokens from the configurable account TPM before applying the prompt margin", () => {
     expect(groqPromptLimit(4_000, 4_000, "automatic")).toBe(4_000);
     expect(groqPromptLimit(12_000, 2_048, 12_000)).toBe(9_952);
     expect(groqPromptLimit(7_000, 8_000, 8_000)).toBe(0);
+  });
+
+  it("allocates one safe Groq action budget for planner and answer", () => {
+    expect(groqActionBudget(undefined, undefined, "automatic")).toEqual({
+      totalTpm: 8_000,
+      plannerInputTokens: 2_000,
+      plannerOutputTokens: 256,
+      answerInputTokens: 4_160,
+      answerOutputTokens: 512
+    });
   });
 
   it("recognizes only the exact Groq API hostname", () => {

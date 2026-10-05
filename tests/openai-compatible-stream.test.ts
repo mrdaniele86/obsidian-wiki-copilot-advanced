@@ -13,6 +13,7 @@ import {
 } from "../src/llm/openai-compatible";
 import { RequestCancelledError, RequestTimeoutError } from "../src/llm/request-timeout";
 import type { ModelSettings } from "../src/settings";
+import { estimatePromptTokens } from "../src/llm/prompt-budget";
 
 const encoder = new TextEncoder();
 const context: BuiltContext = { context: "Evidence", sources: [] };
@@ -60,6 +61,62 @@ afterEach(() => {
 });
 
 describe("OpenAICompatibleClient streaming", () => {
+  it("keeps Groq planner and answer reservations within one automatic action budget", async () => {
+    const requester = vi.fn(async (_request: unknown) => nonStreamingResponse('{"queries":["workout"]}'));
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(responseStream([
+      "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+      "data: [DONE]\n\n"
+    ]), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+    const client = new OpenAICompatibleClient(() => null, { fetcher, requester, timerHost: timerHost() });
+    const groqSettings = { ...settings(), endpoint: "https://api.groq.com/openai/v1" };
+
+    await client.planRetrievalQueries("what next?", groqSettings, 15_000, {
+      history: [{ role: "user", content: "8x300 then Tempo" }]
+    });
+    await client.answer("what next?", context, [], "", groqSettings, 90_000);
+
+    const planner = JSON.parse(String((requester.mock.calls[0]?.[0] as { body?: string }).body)) as {
+      max_tokens?: number;
+      messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+    };
+    const answer = JSON.parse(String((fetcher.mock.calls[0]?.[1] as unknown as RequestInit).body)) as {
+      max_tokens?: number;
+      messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+    };
+
+    expect(planner.max_tokens).toBe(256);
+    expect(answer.max_tokens).toBe(512);
+    expect(
+      estimatePromptTokens(planner.messages) + (planner.max_tokens ?? 0) +
+      estimatePromptTokens(answer.messages) + (answer.max_tokens ?? 0)
+    ).toBeLessThanOrEqual(8_000);
+  });
+
+  it("leaves automatic output unset for non-Groq custom planner and answer requests", async () => {
+    const requester = vi.fn(async (_request: unknown) => nonStreamingResponse('{"queries":["workout"]}'));
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(responseStream([
+      "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+      "data: [DONE]\n\n"
+    ]), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+    const client = new OpenAICompatibleClient(() => null, { fetcher, requester, timerHost: timerHost() });
+
+    await client.planRetrievalQueries("what next?", settings(), 15_000);
+    await client.answer("what next?", context, [], "", settings(), 90_000);
+
+    expect(JSON.parse(String((requester.mock.calls[0]?.[0] as { body?: string }).body))).not.toHaveProperty("max_tokens");
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as unknown as RequestInit).body))).not.toHaveProperty("max_tokens");
+  });
+
+  it("rejects an impossible Groq planner allocation before dispatch", async () => {
+    const requester = vi.fn(async (_request: unknown) => nonStreamingResponse('{"queries":["workout"]}'));
+    const client = new OpenAICompatibleClient(() => null, { requester, timerHost: timerHost() });
+
+    await expect(client.planRetrievalQueries("what next?", {
+      ...settings(), endpoint: "https://api.groq.com/openai/v1", groqTotalTokensPerMinute: 768
+    }, 15_000)).rejects.toMatchObject({ code: "input-too-large" });
+    expect(requester).not.toHaveBeenCalled();
+  });
+
   it("reserves configured Groq output from the account TPM before budgeting the prompt", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(responseStream([
       "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
@@ -76,7 +133,7 @@ describe("OpenAICompatibleClient streaming", () => {
     const request = fetcher.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(String(request.body)) as { max_tokens?: number };
     expect(body.max_tokens).toBe(4_000);
-    expect(budgets[0]).toMatchObject({ limitTokens: 4_000, outputTokens: 4_000, totalTpm: 8_000 });
+    expect(budgets[0]).toMatchObject({ limitTokens: 1_294, outputTokens: 4_000, totalTpm: 8_000 });
   });
 
   it("plans bounded lexical query variants without sending an answer request", async () => {

@@ -13,7 +13,7 @@ import {
   readChatCompletionStream
 } from "./chat-completion-stream";
 import { completionRequestOptions } from "./completion-request";
-import { groqPromptLimit, isGroqEndpoint, planPromptBudget } from "./prompt-budget";
+import { groqActionBudget, isGroqEndpoint, planPromptBudget } from "./prompt-budget";
 import { buildSystemPrompt } from "./prompt";
 import { RequestCancelledError, RequestTimeoutError } from "./request-timeout";
 import { parseRetrievalQueries } from "../core/retrieval-plan";
@@ -386,9 +386,10 @@ export class OpenAICompatibleClient {
     const outputLimit = typeof settings.maximumOutputTokens === "number"
       ? settings.maximumOutputTokens
       : 512;
-    const configuredLimit = groq
-      ? groqPromptLimit(inputLimit, outputLimit, settings.groqTotalTokensPerMinute)
-      : inputLimit;
+    const actionBudget = groq
+      ? groqActionBudget(inputLimit, outputLimit, settings.groqTotalTokensPerMinute)
+      : undefined;
+    const configuredLimit = actionBudget?.answerInputTokens ?? inputLimit;
     if (groq && configuredLimit !== undefined && configuredLimit <= 0) {
       throw new ModelRequestError("input-too-large");
     }
@@ -415,7 +416,8 @@ export class OpenAICompatibleClient {
       question,
       history: reducedContext ? [] : historyForModel(history, ANSWER_HISTORY_MAX_TURNS, ANSWER_HISTORY_MAX_CHARACTERS),
       evidence,
-      limitTokens: requestedLimit
+      limitTokens: requestedLimit,
+      budgetAlreadySafe: groq
     });
     if (plan.overBudget) {
       throw new ModelRequestError("input-too-large");
@@ -446,9 +448,9 @@ export class OpenAICompatibleClient {
       promptBudget: plan.limitTokens === undefined ? undefined : {
         usedTokens: plan.usedTokens,
         limitTokens: plan.limitTokens,
-        ...(groq ? {
-          outputTokens: outputLimit,
-          totalTpm: typeof settings.groqTotalTokensPerMinute === "number" ? settings.groqTotalTokensPerMinute : 8_000
+        ...(actionBudget ? {
+          outputTokens: actionBudget.answerOutputTokens,
+          totalTpm: actionBudget.totalTpm
         } : {})
       }
     };
@@ -462,22 +464,50 @@ export class OpenAICompatibleClient {
   ): PreparedCompletionRequest {
     const headers = this.requestHeaders(settings);
     const providerOptions = completionRequestOptions(settings);
+    const groq = isGroqEndpoint(settings.endpoint);
+    const actionBudget = groq
+      ? groqActionBudget(
+        typeof settings.maximumInputTokens === "number" ? settings.maximumInputTokens : 7_000,
+        typeof settings.maximumOutputTokens === "number" ? settings.maximumOutputTokens : undefined,
+        settings.groqTotalTokensPerMinute
+      )
+      : undefined;
+    if (actionBudget && actionBudget.plannerInputTokens <= 0) {
+      throw new ModelRequestError("input-too-large");
+    }
+    const plannerSystem = retrievalPlannerPrompt(mode);
+    const plannerQuestion = query.trim();
+    const planned = actionBudget
+      ? planPromptBudget({
+        systemPrompt: plannerSystem,
+        question: plannerQuestion,
+        history: historyForModel(history, PLANNER_HISTORY_MAX_TURNS, PLANNER_HISTORY_MAX_CHARACTERS),
+        limitTokens: actionBudget.plannerInputTokens,
+        budgetAlreadySafe: true
+      })
+      : undefined;
+    if (planned?.overBudget) {
+      throw new ModelRequestError("input-too-large");
+    }
+    const messages = planned
+      ? planned.messages.map((message) => message.content === `Question:\n${plannerQuestion}`
+        ? { ...message, content: plannerQuestion }
+        : message)
+      : [
+        { role: "system" as const, content: plannerSystem },
+        ...historyForModel(history, PLANNER_HISTORY_MAX_TURNS, PLANNER_HISTORY_MAX_CHARACTERS),
+        { role: "user" as const, content: plannerQuestion }
+      ];
     return {
       url: completionUrl(settings.endpoint),
       headers,
       body: {
         model: settings.model,
-        messages: [
-          { role: "system", content: retrievalPlannerPrompt(mode) },
-          ...historyForModel(
-            history,
-            PLANNER_HISTORY_MAX_TURNS,
-            PLANNER_HISTORY_MAX_CHARACTERS
-          ),
-          { role: "user", content: query.trim() }
-        ],
+        messages,
         ...providerOptions,
-        ...(settings.provider === "deepseek"
+        ...(actionBudget
+          ? { max_tokens: actionBudget.plannerOutputTokens }
+          : settings.provider === "deepseek"
           ? { max_tokens: mode === "fast" ? 240 : 600 }
           : {})
       }

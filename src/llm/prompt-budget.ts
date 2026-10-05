@@ -162,7 +162,12 @@ export function planPromptBudget(input: PromptBudgetInput): PromptBudgetPlan {
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const turn = history[index];
     if (!turn) continue;
-    const candidate = [{ ...turn }, ...selectedHistory];
+    const previousTurn = history[index - 1];
+    const pair = turn.role === "assistant" && previousTurn?.role === "user"
+      ? [{ ...previousTurn }, { ...turn }]
+      : [{ ...turn }];
+    if (pair.length === 2) index -= 1;
+    const candidate = [...pair, ...selectedHistory];
     const candidateMessages = [
       systemMessage,
       ...candidate,
@@ -170,7 +175,7 @@ export function planPromptBudget(input: PromptBudgetInput): PromptBudgetPlan {
       ...evidenceMessages()
     ];
     if (budget === undefined || estimatePromptTokens(candidateMessages) <= budget) {
-      selectedHistory.unshift({ ...turn });
+      selectedHistory.unshift(...pair);
     }
   }
 

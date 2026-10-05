@@ -106,4 +106,18 @@ describe("prompt budget", () => {
     expect(estimatePromptTokens(plan.messages)).toBe(plan.usedTokens);
     expect(JSON.stringify({ systemPrompt, question, history, evidence })).toBe(original);
   });
+
+  it("does not retain a newest assistant reply without its preceding user message", () => {
+    const plan = planPromptBudget({
+      systemPrompt: "s",
+      question: "q",
+      history: [
+        { role: "user", content: "Earlier question ".repeat(20) },
+        { role: "assistant", content: "Newest reply" }
+      ],
+      limitTokens: 80
+    });
+
+    expect(plan.messages.map((message) => message.content)).not.toContain("Newest reply");
+  });
 });

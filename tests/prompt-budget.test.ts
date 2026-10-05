@@ -62,56 +62,25 @@ describe("prompt budget", () => {
     expect(plan.messages.map((message) => message.content).join("\n")).not.toContain("unwrapped evidence");
   });
 
-  it("prunes ordinary history that initially fits before shortening lower-ranked evidence", () => {
-    const oldHistory = "Old history ".repeat(4);
-    const firstEvidence = `<wiki-copilot-source id="S1" role="source">${"First evidence ".repeat(12)}</wiki-copilot-source>`;
-    const secondEvidence = `<wiki-copilot-source id="S2" role="source">${"Second evidence ".repeat(5)}</wiki-copilot-source>`;
-    const baseline = planPromptBudget({
-      systemPrompt: "System rules.",
-      question: "Question?",
-      history: [{ role: "assistant", content: oldHistory }],
-      evidence: [firstEvidence],
-      limitTokens: 240
-    });
-    const plan = planPromptBudget({
-      systemPrompt: "System rules.",
-      question: "Question?",
-      history: [{ role: "assistant", content: oldHistory }],
-      evidence: [
-        firstEvidence,
-        secondEvidence
-      ],
-      limitTokens: 240
-    });
-    expect(baseline.messages.map((message) => message.content).join("\n")).toContain("Old history");
-    const serialized = plan.messages.map((message) => message.content).join("\n");
-
-    expect(serialized).not.toContain("Old history");
-    expect(serialized).toContain(secondEvidence);
-  });
-
-  it("keeps the question and complete source wrappers while pruning old history before lower-ranked evidence", () => {
+  it("preserves the newest recent-workout pair 8x300 → Tempo before large retrieved evidence", () => {
     const systemPrompt = "Follow the source rules.";
-    const question = "What is the current answer?";
+    const question = "What was my latest workout?";
     const history = [
-      { role: "user" as const, content: "Old history ".repeat(900) },
-      { role: "assistant" as const, content: "Recent history ".repeat(300) }
+      { role: "user" as const, content: "8x300" },
+      { role: "assistant" as const, content: "Tempo" }
     ];
-    const evidence = [
-      `<wiki-copilot-source id="S1" role="source">\n${"Top evidence ".repeat(700)}\n</wiki-copilot-source>`,
-      `<wiki-copilot-source id="S2" role="source">\n${"Lower evidence ".repeat(500)}\n</wiki-copilot-source>`
-    ];
+    const evidence = Array.from(
+      { length: 17 },
+      (_, index) => `<wiki-copilot-source id="S${index + 1}" role="source">${"Large evidence ".repeat(500)}</wiki-copilot-source>`
+    );
     const original = JSON.stringify({ systemPrompt, question, history, evidence });
 
     const plan = planPromptBudget({ systemPrompt, question, history, evidence, limitTokens: 7_000 });
     const serialized = plan.messages.map((message) => message.content).join("\n");
 
-    expect(serialized).toContain(question);
+    expect(plan.messages).toEqual(expect.arrayContaining(history));
     expect(serialized).toContain('<wiki-copilot-source id="S1" role="source">');
-    expect(serialized).toContain('<wiki-copilot-source id="S2" role="source">');
     expect(serialized).toContain("</wiki-copilot-source>");
-    expect(serialized).not.toContain("Recent history");
-    expect(serialized).not.toContain("Old history");
     expect(plan.usedTokens).toBeLessThanOrEqual(Math.floor(7_000 * 0.88));
     expect(estimatePromptTokens(plan.messages)).toBe(plan.usedTokens);
     expect(JSON.stringify({ systemPrompt, question, history, evidence })).toBe(original);

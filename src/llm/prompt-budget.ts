@@ -120,11 +120,6 @@ export function planPromptBudget(input: PromptBudgetInput): PromptBudgetPlan {
   const history = input.history ?? [];
   const evidenceMessages = (): PromptMessage[] => selectedEvidence.map((content) => ({ role: "user", content }));
 
-  if (evidence[0]) {
-    const content = evidenceWithinBudget(evidence[0], [systemMessage, questionMessage], budget);
-    if (content) selectedEvidence.push(content);
-  }
-
   const selectedHistory: PromptMessage[] = [];
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const turn = history[index];
@@ -141,18 +136,7 @@ export function planPromptBudget(input: PromptBudgetInput): PromptBudgetPlan {
     }
   }
 
-  for (const block of evidence.slice(1)) {
-    while (selectedHistory.length > 0 && budget !== undefined) {
-      const withFullEvidence = [
-        systemMessage,
-        ...selectedHistory,
-        questionMessage,
-        ...evidenceMessages(),
-        { role: "user" as const, content: block }
-      ];
-      if (estimatePromptTokens(withFullEvidence) <= budget) break;
-      selectedHistory.shift();
-    }
+  for (const block of evidence) {
     const content = evidenceWithinBudget(
       block,
       [systemMessage, ...selectedHistory, questionMessage, ...evidenceMessages()],

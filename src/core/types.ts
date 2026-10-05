@@ -106,6 +106,7 @@ export interface AnswerResult {
   markdown: string;
   sources: SourceReference[];
   knowledgeBaseHit: boolean;
+  citationWarning?: string;
   pendingClarification?: PendingClarification;
 }
 

@@ -2,6 +2,7 @@ import type { SourceReference } from "./types";
 
 export interface CitationCheck {
   markdown: string;
+  warning?: string;
   citedIds: string[];
   invalidIds: string[];
 }
@@ -95,7 +96,8 @@ export function validateAnswerCitations(
       ? `${normalizedMarkdown.trim()}\n\n> [!warning] Wiki Copilot ${warningText?.title ?? "引用检查"}\n> ${warnings.join(" ")}`
       : normalizedMarkdown,
     citedIds: [...citedIds],
-    invalidIds: [...invalidIds]
+    invalidIds: [...invalidIds],
+    ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {})
   };
 }
 

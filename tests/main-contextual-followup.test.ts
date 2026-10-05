@@ -16,6 +16,78 @@ import WikiCopilotPlugin from "../src/main";
 import { DEFAULT_SETTINGS } from "../src/settings";
 
 describe("contextual answer follow-ups", () => {
+  it("marks a retrieved answer without a valid citation as ungrounded while retaining its markdown and sources", async () => {
+    const rawMarkdown = "Use recovery tomorrow.";
+    const llmAnswer = vi.fn().mockResolvedValue(rawMarkdown);
+    const plugin = Object.create(WikiCopilotPlugin.prototype) as WikiCopilotPlugin & Record<string, unknown>;
+    plugin.settings = DEFAULT_SETTINGS;
+    plugin.t = ((key: string) => key) as WikiCopilotPlugin["t"];
+    plugin.indexCoordinator = { queryGuidance: "" } as WikiCopilotPlugin["indexCoordinator"];
+    plugin.retrieve = vi.fn().mockResolvedValue({
+      query: "what next",
+      chunks: [{
+        id: "workout",
+        path: "workouts.md",
+        title: "Workouts",
+        heading: "Tempo",
+        headingLevel: 1,
+        chunkIndex: 0,
+        text: "Tempo should be followed by recovery.",
+        aliases: "",
+        tags: "",
+        role: "wiki",
+        evidenceTier: "synthesis",
+        score: 1,
+        lexicalScore: 1,
+        origin: "lexical"
+      }],
+      totalCandidates: 1,
+      truncated: false
+    });
+    (plugin as unknown as { llmClient: { answer: typeof llmAnswer } }).llmClient = { answer: llmAnswer };
+
+    const answer = await plugin.answer("what next", []);
+
+    expect(answer).toMatchObject({
+      markdown: rawMarkdown,
+      sources: [expect.objectContaining({ id: "S1", path: "workouts.md" })],
+      knowledgeBaseHit: false,
+      citationWarning: "view.citationWarningMissing"
+    });
+  });
+
+  it("keeps a retrieved answer grounded when it contains a valid citation", async () => {
+    const llmAnswer = vi.fn().mockResolvedValue("Use recovery tomorrow. [S1]");
+    const plugin = Object.create(WikiCopilotPlugin.prototype) as WikiCopilotPlugin & Record<string, unknown>;
+    plugin.settings = DEFAULT_SETTINGS;
+    plugin.t = ((key: string) => key) as WikiCopilotPlugin["t"];
+    plugin.indexCoordinator = { queryGuidance: "" } as WikiCopilotPlugin["indexCoordinator"];
+    plugin.retrieve = vi.fn().mockResolvedValue({
+      query: "what next",
+      chunks: [{
+        id: "workout",
+        path: "workouts.md",
+        title: "Workouts",
+        heading: "Tempo",
+        headingLevel: 1,
+        chunkIndex: 0,
+        text: "Tempo should be followed by recovery.",
+        aliases: "",
+        tags: "",
+        role: "wiki",
+        evidenceTier: "synthesis",
+        score: 1,
+        lexicalScore: 1,
+        origin: "lexical"
+      }],
+      totalCandidates: 1,
+      truncated: false
+    });
+    (plugin as unknown as { llmClient: { answer: typeof llmAnswer } }).llmClient = { answer: llmAnswer };
+
+    await expect(plugin.answer("what next", [])).resolves.toMatchObject({ knowledgeBaseHit: true });
+  });
+
   it("sends an unmatched 8x300 query to the model without conversation context", async () => {
     const llmAnswer = vi.fn().mockResolvedValue("The recommendation is recovery.");
     const plugin = Object.create(WikiCopilotPlugin.prototype) as WikiCopilotPlugin & Record<string, unknown>;
@@ -28,7 +100,11 @@ describe("contextual answer follow-ups", () => {
     const answer = await plugin.answer("8x300", []);
 
     expect(llmAnswer).toHaveBeenCalledOnce();
-    expect(answer.markdown).toBe("The recommendation is recovery.");
+    expect(answer).toMatchObject({
+      markdown: "The recommendation is recovery.",
+      sources: [],
+      knowledgeBaseHit: false
+    });
   });
 
   it("sends an unmatched 8x300 follow-up to the model when recent context is enabled", async () => {

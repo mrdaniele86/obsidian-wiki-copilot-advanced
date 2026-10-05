@@ -133,13 +133,42 @@ describe("OpenAICompatibleClient streaming", () => {
     })).resolves.toBe("ok");
   });
 
+  it("keeps the 8x300 to Tempo pair at the Groq answer model boundary with 17 source blocks", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(responseStream([
+      "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+      "data: [DONE]\n\n"
+    ]), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+    const client = new OpenAICompatibleClient(() => null, { fetcher, timerHost: timerHost() });
+    const sourceBlocks = Array.from({ length: 17 }, (_, index) =>
+      `<wiki-copilot-source id="S${index + 1}" role="source">${"Large evidence ".repeat(500)}</wiki-copilot-source>`
+    );
+
+    await client.answer("what was my latest workout?", {
+      context: sourceBlocks.join("\n\n"),
+      sources: []
+    }, [
+      { role: "user", content: "8x300" },
+      { role: "assistant", content: "Tempo" }
+    ], "", { ...settings(), endpoint: "https://api.groq.com/openai/v1" }, 90_000);
+
+    const request = fetcher.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body)) as { messages: Array<{ content: string }> };
+    expect(body.messages.map((message) => message.content)).toEqual(expect.arrayContaining(["8x300", "Tempo"]));
+  });
+
   it("reserves configured Groq output from the account TPM before budgeting the prompt", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(responseStream([
       "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
       "data: [DONE]\n\n"
     ]), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
     const client = new OpenAICompatibleClient(() => null, { fetcher, timerHost: timerHost() });
-    const budgets: Array<{ usedTokens: number; limitTokens: number }> = [];
+    const budgets: Array<{
+      usedTokens: number;
+      limitTokens: number;
+      plannerReservationTokens?: number;
+      outputTokens?: number;
+      totalTpm?: number;
+    }> = [];
 
     await client.answer("question", context, [], "", {
       ...settings(), endpoint: "https://api.groq.com/openai/v1", maximumInputTokens: 8_000,
@@ -149,7 +178,12 @@ describe("OpenAICompatibleClient streaming", () => {
     const request = fetcher.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(String(request.body)) as { max_tokens?: number };
     expect(body.max_tokens).toBe(4_000);
-    expect(budgets[0]).toMatchObject({ limitTokens: 1_647, outputTokens: 4_000, totalTpm: 8_000 });
+    expect(budgets[0]).toMatchObject({
+      limitTokens: 1_647,
+      plannerReservationTokens: 1_903,
+      outputTokens: 4_000,
+      totalTpm: 8_000
+    });
   });
 
   it("plans bounded lexical query variants without sending an answer request", async () => {

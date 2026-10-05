@@ -73,7 +73,7 @@ export interface AnswerOptions {
   signal?: AbortSignal;
   responseMode?: ModelResponseMode;
   reducedContext?: boolean;
-  onPromptBudget?: (budget: { usedTokens: number; limitTokens: number; outputTokens?: number; totalTpm?: number }) => void;
+  onPromptBudget?: (budget: { usedTokens: number; limitTokens: number; plannerReservationTokens?: number; outputTokens?: number; totalTpm?: number }) => void;
   onProgress?: (message: string) => void;
   onDelta?: (delta: string) => void;
   onRetrieved?: (
@@ -615,10 +615,12 @@ export default class WikiCopilotPlugin extends Plugin {
       invalidIds: (ids) => this.t("view.citationWarningInvalidIds", { ids }),
       missingValidCitation: this.t("view.citationWarningMissing")
     });
+    const ungrounded = knowledgeBaseHit && context.sources.length > 0 && citationCheck.citedIds.length === 0;
     return {
-      markdown: citationCheck.markdown,
+      markdown: ungrounded ? rawMarkdown : citationCheck.markdown,
       sources: context.sources,
-      knowledgeBaseHit,
+      knowledgeBaseHit: !ungrounded && knowledgeBaseHit,
+      ...(ungrounded && citationCheck.warning ? { citationWarning: citationCheck.warning } : {}),
       ...(clarificationDirective ? {
         pendingClarification: {
           ...clarificationDirective,

@@ -49,7 +49,7 @@ export interface CompletionAnswerOptions {
   onWarning?: (warning: ModelCompletionWarning) => void;
   onClarification?: (clarification: ClarificationDirective) => void;
   reducedContext?: boolean;
-  onPromptBudget?: (budget: { usedTokens: number; limitTokens: number; outputTokens?: number; totalTpm?: number }) => void;
+  onPromptBudget?: (budget: { usedTokens: number; limitTokens: number; plannerReservationTokens?: number; outputTokens?: number; totalTpm?: number }) => void;
 }
 
 export interface RetrievalPlanningOptions {
@@ -119,7 +119,7 @@ interface PreparedCompletionRequest {
   url: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
-  promptBudget?: { usedTokens: number; limitTokens: number; outputTokens?: number; totalTpm?: number };
+  promptBudget?: { usedTokens: number; limitTokens: number; plannerReservationTokens?: number; outputTokens?: number; totalTpm?: number };
 }
 
 const ANSWER_HISTORY_MAX_TURNS = 10;
@@ -449,6 +449,7 @@ export class OpenAICompatibleClient {
         usedTokens: plan.usedTokens,
         limitTokens: plan.limitTokens,
         ...(actionBudget ? {
+          plannerReservationTokens: actionBudget.plannerInputTokens + actionBudget.plannerOutputTokens,
           outputTokens: actionBudget.answerOutputTokens,
           totalTpm: actionBudget.totalTpm
         } : {})

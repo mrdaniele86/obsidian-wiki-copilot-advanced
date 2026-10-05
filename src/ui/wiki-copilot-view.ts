@@ -58,7 +58,7 @@ export function webSearchButtonState(mode: WebSearchMode, busy: boolean): { hidd
 
 interface AssistantMessageHandle {
   update(markdown: string): void;
-  finish(markdown: string, sources: SourceReference[], webSearch?: WebSearchResult): Promise<void>;
+  finish(markdown: string, sources: SourceReference[], webSearch?: WebSearchResult, citationWarning?: string): Promise<void>;
   interrupt(markdown: string, sources: SourceReference[], message: string): Promise<void>;
 }
 
@@ -849,7 +849,8 @@ export class WikiCopilotView extends ItemView {
           updateProgress(budget.totalTpm === undefined ? this.plugin.t("view.promptBudget", {
             used: budget.usedTokens,
             limit: budget.limitTokens
-          }) : this.plugin.t("view.groqPromptBudget", {
+          }) : this.plugin.t("view.groqActionBudget", {
+            planner: budget.plannerReservationTokens ?? 0,
             input: budget.usedTokens,
             output: budget.outputTokens ?? 0,
             total: budget.totalTpm
@@ -905,13 +906,15 @@ export class WikiCopilotView extends ItemView {
       }
       waitingForFirstContent = false;
       if (streamState.message) {
-        await streamState.message.finish(answer.markdown, answer.sources);
+        await streamState.message.finish(answer.markdown, answer.sources, undefined, answer.citationWarning);
       } else {
         loading.remove();
         await this.appendAssistantMessage(
           answer.markdown,
           answer.sources,
-          answer.knowledgeBaseHit
+          answer.knowledgeBaseHit,
+          undefined,
+          answer.citationWarning
         );
       }
       const fallbackClarification = answer.pendingClarification ?? fallbackPendingClarification(
@@ -1046,10 +1049,11 @@ export class WikiCopilotView extends ItemView {
     markdown: string,
     sources: SourceReference[],
     knowledgeBaseHit: boolean,
-    webSearch?: WebSearchResult
+    webSearch?: WebSearchResult,
+    citationWarning?: string
   ): Promise<void> {
     const message = this.appendStreamingAssistantMessage(knowledgeBaseHit);
-    await message.finish(markdown, sources, webSearch);
+    await message.finish(markdown, sources, webSearch, citationWarning);
   }
 
   private appendStreamingAssistantMessage(knowledgeBaseHit: boolean): AssistantMessageHandle {
@@ -1085,7 +1089,7 @@ export class WikiCopilotView extends ItemView {
           renderer.update(streamedMarkdown);
         }
       },
-      finish: async (finalMarkdown, finalSources, webSearch) => {
+      finish: async (finalMarkdown, finalSources, webSearch, citationWarning) => {
         if (finalized) {
           return;
         }
@@ -1096,6 +1100,9 @@ export class WikiCopilotView extends ItemView {
         this.registerCitationLinks(body, finalSources);
         this.renderSources(body, finalSources);
         this.renderWebSources(body, webSearch);
+        if (citationWarning) {
+          body.createDiv({ cls: "wiki-copilot-citation-warning", text: citationWarning });
+        }
         if (keepPinned) {
           this.scrollToBottom();
         }

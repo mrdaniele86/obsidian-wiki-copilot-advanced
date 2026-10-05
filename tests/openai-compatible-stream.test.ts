@@ -117,6 +117,22 @@ describe("OpenAICompatibleClient streaming", () => {
     expect(requester).not.toHaveBeenCalled();
   });
 
+  it("keeps normal and reduced Groq answers possible at a low valid TPM", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(responseStream([
+      "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+      "data: [DONE]\n\n"
+    ]), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+    const client = new OpenAICompatibleClient(() => null, { fetcher, timerHost: timerHost() });
+    const lowTpmSettings = {
+      ...settings(), endpoint: "https://api.groq.com/openai/v1", groqTotalTokensPerMinute: 3_000
+    };
+
+    await expect(client.answer("what next?", context, [], "", lowTpmSettings, 90_000)).resolves.toBe("ok");
+    await expect(client.answer("what next?", context, [], "", lowTpmSettings, 90_000, {
+      reducedContext: true
+    })).resolves.toBe("ok");
+  });
+
   it("reserves configured Groq output from the account TPM before budgeting the prompt", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(responseStream([
       "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
@@ -133,7 +149,7 @@ describe("OpenAICompatibleClient streaming", () => {
     const request = fetcher.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(String(request.body)) as { max_tokens?: number };
     expect(body.max_tokens).toBe(4_000);
-    expect(budgets[0]).toMatchObject({ limitTokens: 1_294, outputTokens: 4_000, totalTpm: 8_000 });
+    expect(budgets[0]).toMatchObject({ limitTokens: 1_647, outputTokens: 4_000, totalTpm: 8_000 });
   });
 
   it("plans bounded lexical query variants without sending an answer request", async () => {

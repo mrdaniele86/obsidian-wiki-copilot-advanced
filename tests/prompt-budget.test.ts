@@ -18,6 +18,17 @@ describe("prompt budget", () => {
     });
   });
 
+  it("keeps answer input available at a low valid Groq TPM", () => {
+    const budget = groqActionBudget(undefined, undefined, 3_000);
+
+    expect(budget.plannerInputTokens).toBeGreaterThan(0);
+    expect(budget.answerInputTokens).toBeGreaterThan(0);
+    expect(
+      budget.plannerInputTokens + budget.plannerOutputTokens +
+      budget.answerInputTokens + budget.answerOutputTokens
+    ).toBeLessThanOrEqual(3_000);
+  });
+
   it("recognizes only the exact Groq API hostname", () => {
     expect(isGroqEndpoint("https://API.GROQ.COM/v1/")).toBe(true);
     expect(isGroqEndpoint("https://api.groq.com")).toBe(true);

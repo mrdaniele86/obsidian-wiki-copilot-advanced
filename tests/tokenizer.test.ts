@@ -58,4 +58,19 @@ describe("tokenizeForSearch", () => {
     );
     expect(strictTechnicalIdentifierTokens("8x300")).toEqual([]);
   });
+
+  it("does not turn natural quantities into strict identifiers", () => {
+    const quantities = "Ho mangiato 200gr di pasta, bevuto 250ml d'acqua e assunto 180 kcal.";
+
+    expect(technicalIdentifierTokens(quantities)).not.toEqual(expect.arrayContaining([
+      "200gr",
+      "250ml",
+      "mangiato200gr",
+      "bevuto250ml",
+      "assunto180"
+    ]));
+    expect(strictTechnicalIdentifierTokens(quantities)).toEqual([]);
+    expect(strictTechnicalIdentifierTokens("200 g 200 grammi 250 ml")).toEqual([]);
+    expect(strictTechnicalIdentifierTokens("Ho mangiato 2 uova e letto pagina 3")).toEqual([]);
+  });
 });

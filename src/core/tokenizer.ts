@@ -3,6 +3,7 @@ const TOKEN_RUN =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+|[\p{L}\p{N}][\p{L}\p{N}_./#+:-]*/gu;
 const TECHNICAL_SEPARATOR = /[._/#+:-]+/u;
 const SPACED_IDENTIFIER = /([a-z]{2,})[\s._/#+:-]+(\d[a-z\d]*)/giu;
+const NATURAL_QUANTITY = /^\d+(?:[.,]\d+)?\s*(?:millilitri?|chilogrammi?|grammi?|litri?|kcal|mcg|mg|kg|gr|ml|cl|dl|ug|cal|g|l)\b/iu;
 const LOWERCASE_OR_NUMBER = /[\p{Ll}\p{N}]/u;
 const UPPERCASE = /\p{Lu}/u;
 const LOWERCASE = /\p{Ll}/u;
@@ -105,6 +106,16 @@ function tokenizeTechnicalRun(run: string): string[] {
   return [...new Set(tokens)];
 }
 
+function addTechnicalIdentifier(identifiers: Set<string>, value: string): void {
+  const token = value.toLocaleLowerCase().split(TECHNICAL_SEPARATOR).join("");
+  if (NATURAL_QUANTITY.test(token)) {
+    return;
+  }
+  if (/[a-z]/iu.test(token) && /\d/u.test(token) && token.length >= 3) {
+    identifiers.add(token);
+  }
+}
+
 /**
  * Tokenizes both Chinese prose and technical identifiers without a dictionary
  * dependency. Intl.Segmenter contributes word candidates while overlapping CJK
@@ -135,18 +146,16 @@ export function tokenizeForSearch(input: string): string[] {
 export function technicalIdentifierTokens(input: string): string[] {
   const normalized = input.normalize("NFKC");
   const identifiers = new Set<string>();
-  const addIdentifier = (value: string): void => {
-    const token = value.toLocaleLowerCase().split(TECHNICAL_SEPARATOR).join("");
-    if (/[a-z]/iu.test(token) && /\d/u.test(token) && token.length >= 3) {
-      identifiers.add(token);
-    }
-  };
 
   for (const token of tokenizeForSearch(normalized)) {
-    addIdentifier(token);
+    addTechnicalIdentifier(identifiers, token);
   }
   for (const match of normalized.matchAll(SPACED_IDENTIFIER)) {
-    addIdentifier(`${match[1] ?? ""}${match[2] ?? ""}`);
+    const start = (match.index ?? 0) + (match[0]?.length ?? 0) - (match[2]?.length ?? 0);
+    if (NATURAL_QUANTITY.test(normalized.slice(start))) {
+      continue;
+    }
+    addTechnicalIdentifier(identifiers, `${match[1] ?? ""}${match[2] ?? ""}`);
   }
   return [...identifiers];
 }
@@ -157,7 +166,11 @@ export function technicalIdentifierTokens(input: string): string[] {
  * retrieval, so values such as workout notation can still inform ranking.
  */
 export function strictTechnicalIdentifierTokens(input: string): string[] {
-  return technicalIdentifierTokens(input).filter((identifier) =>
+  const identifiers = new Set<string>();
+  for (const token of tokenizeForSearch(input.normalize("NFKC"))) {
+    addTechnicalIdentifier(identifiers, token);
+  }
+  return [...identifiers].filter((identifier) =>
     /^[a-z]/iu.test(identifier) &&
     (identifier.match(/[a-z]/giu)?.length ?? 0) >= 2 &&
     /\d/u.test(identifier)

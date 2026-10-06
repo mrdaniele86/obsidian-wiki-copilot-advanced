@@ -30,6 +30,26 @@ describe("WikiRetriever", () => {
     expect(result.chunks.map((chunk) => chunk.path)).not.toContain("wiki/summaries/Python 2.md");
   });
 
+  it("retrieves a named plan when a natural quantity appears in the question", () => {
+    const index = new WikiSearchIndex();
+    const graph = new LinkGraph();
+    add(
+      index,
+      "wiki/summaries/Piano alimentare - Daniele Lorandini.md",
+      "summary",
+      "# Piano alimentare - Daniele Lorandini\n\nRegole, avvertenze e dettagli nutrizionali del piano."
+    );
+
+    const result = new WikiRetriever(index, graph).retrieve(
+      "Questa sera ho mangiato 200gr di pasta integrale con pomodoro e tonno. Sono in linea con il mio piano alimentare?",
+      { graphExpansion: false }
+    );
+
+    expect(result.chunks.map((chunk) => chunk.path)).toContain(
+      "wiki/summaries/Piano alimentare - Daniele Lorandini.md"
+    );
+  });
+
   it("treats an exact technical identifier as an anchor instead of generic query prose", () => {
     const index = new WikiSearchIndex();
     const graph = new LinkGraph();

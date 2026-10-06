@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `2.1.1-beta.16`: Prevent natural quantities and ordinary prose followed by a count from being treated as exact technical identifiers, so questions such as a meal against a named dietary plan can retrieve their relevant Vault evidence.
+
 - `2.1.1-beta.15`: Make Groq answer budgeting answer-first so optional retrieval planning cannot block a sendable first question; target Groq GPT-OSS models with low reasoning, hidden reasoning, and current completion-token parameters; and report textless GPT-OSS responses safely without exposing provider details.
 
 - `2.1.1-beta.14`: Prioritize complete recent conversation pairs ahead of Vault evidence; keep workout notation such as `8x300` out of the strict technical-identifier guard; budget Groq retrieval planning and answer generation together under the configured TPM; persist citation-grounding warnings; and add desktop composer clearance above the status bar.

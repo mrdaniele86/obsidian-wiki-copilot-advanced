@@ -70,4 +70,34 @@ describe("FullMarkdownSearchMatcher", () => {
       "# 通用软件测试\n\n这里只描述软件测试流程和测试工具。"
     )).toBeNull();
   });
+
+  it("includes the following section when one selected section needs its continuation", () => {
+    const path = "Sport/Allenamenti/Garmin.md";
+    const note = metadata(path, "pending-source");
+    const markdown = [
+      "# Garmin",
+      "",
+      "## Matrice base",
+      "",
+      "VO2max uses the row V of the compatibility matrix.",
+      "",
+      "## Peso del penultimo allenamento e correttivi",
+      "",
+      "Apply 0.65 to the last training, 0.35 to the penultimate training, then apply the corrective adjustment."
+    ].join("\n");
+    const matcher = new FullMarkdownSearchMatcher("VO2max compatibility", [
+      "VO2max compatibility"
+    ]);
+
+    const chunks = matcher.chunksForNote(
+      note,
+      markdown,
+      matcher.scoreFile(path, markdown) ?? 0
+    );
+
+    expect(chunks.map((chunk) => chunk.heading)).toEqual([
+      "Garmin › Matrice base",
+      "Garmin › Peso del penultimo allenamento e correttivi"
+    ]);
+  });
 });

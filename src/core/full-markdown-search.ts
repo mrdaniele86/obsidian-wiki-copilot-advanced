@@ -148,8 +148,9 @@ export class FullMarkdownSearchMatcher {
     fileScore: number,
     limit = 2
   ): RetrievedChunk[] {
+    const noteChunks = chunkMarkdown(metadata.path, markdown);
     const ranked: RetrievedChunk[] = [];
-    for (const chunk of chunkMarkdown(metadata.path, markdown)) {
+    for (const chunk of noteChunks) {
       const metadataText = searchableMetadata(metadata, chunk.title, chunk.heading);
       const relevance = this.scoreText(metadataText, chunk.text);
       if (relevance === null) {
@@ -173,9 +174,34 @@ export class FullMarkdownSearchMatcher {
       }
       ranked.push(document);
     }
-    return ranked
+    const maximumChunks = Math.max(1, limit);
+    const selected = ranked
       .sort((left, right) => right.score - left.score || left.chunkIndex - right.chunkIndex)
-      .slice(0, Math.max(1, limit));
+      .slice(0, maximumChunks);
+    if (selected.length >= maximumChunks) {
+      return selected;
+    }
+
+    const selectedIds = new Set(selected.map((chunk) => chunk.id));
+    for (const chunk of selected) {
+      const continuation = noteChunks.find((candidate) =>
+        candidate.chunkIndex === chunk.chunkIndex + 1);
+      if (!continuation || selectedIds.has(continuation.id)) {
+        continue;
+      }
+      selected.push({
+        ...continuation,
+        aliases: metadata.aliases.join(" "),
+        tags: metadata.tags.join(" "),
+        role: metadata.role,
+        evidenceTier: roleToEvidenceTier(metadata.role),
+        score: chunk.score,
+        lexicalScore: chunk.lexicalScore,
+        origin: "lexical"
+      });
+      break;
+    }
+    return selected;
   }
 
   private scoreText(metadataText: string, bodyText: string): number | null {

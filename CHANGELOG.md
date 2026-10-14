@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `2.1.1-beta.17`: When precise retrieval selects only one section from a Markdown source, include its immediate following section when it fits the context budget. This keeps dependent tables and their calculation rules together without broadening retrieval to unrelated notes.
+
 - `2.1.1-beta.16`: Prevent natural quantities and ordinary prose followed by a count from being treated as exact technical identifiers, so questions such as a meal against a named dietary plan can retrieve their relevant Vault evidence.
 
 - `2.1.1-beta.15`: Make Groq answer budgeting answer-first so optional retrieval planning cannot block a sendable first question; target Groq GPT-OSS models with low reasoning, hidden reasoning, and current completion-token parameters; and report textless GPT-OSS responses safely without exposing provider details.
